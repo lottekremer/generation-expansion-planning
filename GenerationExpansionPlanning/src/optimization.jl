@@ -57,7 +57,7 @@ function run_experiment(data::ExperimentData, optimizer_factory)::ExperimentResu
         @constraint(model,
             total_operational_cost
             ==
-            (1 / length(S))  * (8760 / length(T))
+            (1 / length(S))  * (8760 / length(T)) * 
             (sum(variable_cost[n, g] * production[n, g, t, s] for (n, g) ∈ NG, t ∈ T, s ∈ S)
              +
              data.value_of_lost_load * sum(loss_of_load[n, t, s] for n ∈ N, t ∈ T, s ∈ S))
