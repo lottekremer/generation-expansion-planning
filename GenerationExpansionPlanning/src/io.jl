@@ -49,8 +49,15 @@ function read_config(config_path::AbstractString)::Dict{Symbol,Any}
     function read_file!(path::AbstractString, key::Symbol, format::Symbol)
         if format ≡ :CSV
             data_config[key] = (path, data_config[key]) |> joinpath |> CSV.File |> DataFrame
+            # If a scenario is included, make sure that they are seen as strings to be accessed as symbols later 
+            if "scenario" in names(data_config[key])
+                data_config[key][!, :scenario] = string.(data_config[key][!, :scenario])
+                data_config[key][!, :scenario] = convert(Vector{String}, data_config[key][!, :scenario])
+            end
+
             string_columns = findall(col -> eltype(col) <: AbstractString, eachcol(data_config[key]))
             data_config[key][!, string_columns] = Symbol.(data_config[key][!, string_columns])
+
         elseif format ≡ :TOML
             data_config[key] = (path, data_config[key]) |> joinpath |> TOML.parsefile |> keys_to_symbols
         end
@@ -61,6 +68,9 @@ function read_config(config_path::AbstractString)::Dict{Symbol,Any}
     read_file!(input_dir, :generation, :CSV)
     read_file!(input_dir, :transmission_lines, :CSV)
     read_file!(input_dir, :scalars, :TOML)
+
+    # change scenario vector of strings to vector of symbols
+    sets_config[:scenarios] = Symbol.(sets_config[:scenarios])
 
     # remove the directory entry as it has been added to the file paths
     # and therefore it is no longer needed
@@ -149,6 +159,9 @@ end
 
 function save_result(result::ExperimentResult, config::Dict{Symbol,Any})
     dir = config[:dir]
+    timestamp = Dates.format(Dates.now(), "yyyy-mm-dd_HH-MM-SS")
+
+    dir = joinpath(dir, timestamp)
     mkpath(dir)
 
     function save_dataframe(df::AbstractDataFrame, file::String)

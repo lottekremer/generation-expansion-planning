@@ -40,5 +40,5 @@ end
 
 # Save the dataframes to CSV files in the stylized_EU input folder
 for (year, df) in yearly_demand
-    CSV.write("./case_studies/stylized_EU/inputs/demand_$(year).csv", df)
+    CSV.write("./case_studies/scripts/scenarios_separate/demand_$(year).csv", df)
 end

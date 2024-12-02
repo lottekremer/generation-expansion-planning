@@ -4,7 +4,7 @@ using Statistics
 using XLSX
 
 # Reading the original demand data from the CSV file and calculating the average demand per country
-df = CSV.read(".\\case_studies\\stylized_EU\\inputs\\demand.csv", DataFrame)
+df = CSV.read(".\\case_studies\\scripts\\scenarios_separate\\demand_0000.csv", DataFrame)
 average_demand_per_country = combine(groupby(df, :location), :demand => mean => :average_demand)
 println(average_demand_per_country)
 

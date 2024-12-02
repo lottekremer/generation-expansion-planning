@@ -7,6 +7,7 @@ struct ExperimentData
     # Sets
     time_steps::Vector{Int}
     locations::Vector{Symbol}
+    scenarios::Vector{Symbol}
     transmission_lines::Vector{Tuple{Symbol,Symbol}}
     generators::Vector{Tuple{Symbol,Symbol}}
     generation_technologies::Vector{Symbol}
@@ -29,6 +30,7 @@ struct ExperimentData
         return new(
             sets[:time_steps],
             sets[:locations],
+            sets[:scenarios],
             sets[:transmission_lines],
             sets[:generators],
             sets[:generation_technologies],

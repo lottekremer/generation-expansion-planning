@@ -72,7 +72,7 @@ for year in years_of_interest
         println("Added wind offshore data for $(location)...")
     end
 
-    output_file = "./case_studies/stylized_EU/inputs/generation_availability_$(year).csv"
+    output_file = "./case_studies/scripts/scenarios_separate/generation_availability_$(year).csv"
     CSV.write(output_file, results)
 
 end
