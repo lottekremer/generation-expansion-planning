@@ -42,10 +42,9 @@ function read_config(config_path::AbstractString)::Dict{Symbol,Any}
 
     # find the input directory
     config_dir = full_path |> dirname  # directory where the config is located
-    input_dir = (config_dir, data_config[:dir]) |> joinpath |> abspath  # input data directory
+    input_dir = (config_dir, "..", data_config[:dir]) |> joinpath |> abspath  # input data directory
 
     # read the dataframes from files
-
     function read_file!(path::AbstractString, key::Symbol, format::Symbol)
         if format ≡ :CSV
             data_config[key] = (path, data_config[key]) |> joinpath |> CSV.File |> DataFrame
@@ -82,6 +81,9 @@ function read_config(config_path::AbstractString)::Dict{Symbol,Any}
         t_min = min(minimum(data_config[:demand].time_step), minimum(data_config[:generation_availability].time_step))
         t_max = max(maximum(data_config[:demand].time_step), maximum(data_config[:generation_availability].time_step))
         sets_config[:time_steps] = t_min:t_max
+    elseif isa(sets_config[:time_steps], Int)
+        sets_config[:time_steps] = 1:sets_config[:time_steps]
+        println("Succeeded")
     end
 
     if sets_config[:locations] == "auto"
