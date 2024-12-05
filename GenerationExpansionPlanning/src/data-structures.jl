@@ -11,12 +11,15 @@ struct ExperimentData
     transmission_lines::Vector{Tuple{Symbol,Symbol}}
     generators::Vector{Tuple{Symbol,Symbol}}
     generation_technologies::Vector{Symbol}
+    periods::Vector{Int}
 
     # Dataframes
     demand::AbstractDataFrame
     generation_availability::AbstractDataFrame
     generation::AbstractDataFrame
     transmission_capacities::AbstractDataFrame
+    scenario_probabilities::AbstractDataFrame
+    period_weights::Vector{Float64}
 
     # Scalars
     value_of_lost_load::Float64
@@ -26,6 +29,7 @@ struct ExperimentData
         sets = config_dict[:sets]
         data = config_dict[:data]
         scalars = data[:scalars]
+        rp = config_dict[:rp]
 
         return new(
             sets[:time_steps],
@@ -34,10 +38,13 @@ struct ExperimentData
             sets[:transmission_lines],
             sets[:generators],
             sets[:generation_technologies],
+            rp[:periods],
             data[:demand],
             data[:generation_availability],
             data[:generation],
             data[:transmission_lines],
+            data[:scenario_probabilities],
+            rp[:period_weights],
             scalars[:value_of_lost_load],
             scalars[:relaxation],
         )

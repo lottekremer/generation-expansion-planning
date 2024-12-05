@@ -39,6 +39,7 @@ function read_config(config_path::AbstractString)::Dict{Symbol,Any}
     # aliases for input config dictionaries 
     data_config = config[:input][:data]
     sets_config = config[:input][:sets]
+    rp_config = config[:input][:rp]
 
     # find the input directory
     config_dir = full_path |> dirname  # directory where the config is located
@@ -68,8 +69,14 @@ function read_config(config_path::AbstractString)::Dict{Symbol,Any}
     read_file!(input_dir, :transmission_lines, :CSV)
     read_file!(input_dir, :scalars, :TOML)
 
-    # change scenario vector of strings to vector of symbols
+    # change scenario vector of strings to vector of symbols and find weights
     sets_config[:scenarios] = Symbol.(sets_config[:scenarios])
+    if data_config[:scenario_probabilities] == "auto"
+        probabilities = ones(length(sets_config[:scenarios])) / length(sets_config[:scenarios])
+        data_config[:scenario_probabilities] = DataFrame(scenario = sets_config[:scenarios], probability = probabilities)
+    else
+        read_file!(input_dir, :scenario_probabilities, :CSV)
+    end
 
     # remove the directory entry as it has been added to the file paths
     # and therefore it is no longer needed
@@ -83,7 +90,6 @@ function read_config(config_path::AbstractString)::Dict{Symbol,Any}
         sets_config[:time_steps] = t_min:t_max
     elseif isa(sets_config[:time_steps], Int)
         sets_config[:time_steps] = 1:sets_config[:time_steps]
-        println("Succeeded")
     end
 
     if sets_config[:locations] == "auto"
@@ -106,12 +112,20 @@ function read_config(config_path::AbstractString)::Dict{Symbol,Any}
             Tuple.(map(collect, zip(data_config[:transmission_lines].from, data_config[:transmission_lines].to)))
     end
 
+    # create periods
+    if rp_config[:use_periods]
+        addPeriods!(config, rp_config[:number_of_periods])
+        sets_config[:time_steps] = 1:rp_config[:period_duration]
+    else
+        addPeriods!(config, 1)
+    end
+
     config[:output][:dir] = (config_dir, config[:output][:dir]) |> joinpath |> abspath
 
     return config
 end
 
-"""
+"""]
     dataframe_to_dict(
         df::AbstractDataFrame,
         keys::Union{Symbol, Vector{Symbol}},
@@ -185,4 +199,95 @@ function save_result(result::ExperimentResult, config::Dict{Symbol,Any})
     open(fname, "w") do io
         TOML.print(io, scalar_data)
     end
+end
+
+function addPeriods!(config::Dict{Symbol,Any}, num_periods::Int)
+    data_config = config[:input][:data]
+    sets_config = config[:input][:sets]
+    rp_config = config[:input][:rp]
+
+    if num_periods > 1
+        scenario = sets_config[:scenarios][1]
+        period_duration = rp_config[:period_duration]
+        timesteps = sets_config[:time_steps]
+    
+        # Process the data to get correct format for TulipaClustering and cluster
+        data, max_demand = process_data(data_config[:demand], data_config[:generation_availability], scenario, period_duration, timesteps)
+        rp = find_representative_periods(data, rp_config[:number_of_periods])
+
+        # Create copies to not lose the old data
+        data_config[:old_demand] = deepcopy(data_config[:demand])
+        data_config[:old_generation] = deepcopy(data_config[:generation_availability])
+
+        # Split demand and generation data
+        split_values = split.(rp.profiles.profile_name, "_")
+        rp.profiles[!, :location] = getindex.(split_values, 1)
+        rp.profiles[!, :technology] = getindex.(split_values, 2)
+
+        # Get correct demand dataframes
+        data_config[:demand] = filter(row -> row.technology == "demand", rp.profiles)
+        data_config[:demand][!, :demand] = data_config[:demand][!, :value] * max_demand
+        data_config[:demand] = select(data_config[:demand], Not([:technology, :profile_name, :value]))
+        rename!(data_config[:demand], :timestep => :time_step)
+
+        # Get correct generation availability dataframes
+        data_config[:generation_availability] = filter(row -> row.technology != "demand", rp.profiles)
+        data_config[:generation_availability] = select(data_config[:generation_availability], Not(:profile_name))
+        rename!(data_config[:generation_availability], :value => :availability)
+        rename!(data_config[:generation_availability], :timestep => :time_step)
+
+        # Add period weights
+        rp_config[:periods] = 1:num_periods
+        weights = [sum(rp.weight_matrix[:, col]) for col in 1:rp_config[:number_of_periods]]
+        rp_config[:period_weights] = weights
+    else
+
+        data_config[:demand][!, :rep_period] = ones(size(data_config[:demand], 1))
+
+        data_config[:generation_availability][!, :rep_period] = ones(size(data_config[:generation_availability], 1))
+
+        # Set period weights to a dataframe with just a 1 and 1
+        rp_config[:periods] = [1]
+        rp_config[:period_weights] = [1.0]
+    end
+    
+    string_columns_demand = findall(col -> eltype(col) <: AbstractString, eachcol(data_config[:demand]))
+    data_config[:demand][!, string_columns_demand] = Symbol.(data_config[:demand][!, string_columns_demand])
+
+    string_columns_generation = findall(col -> eltype(col) <: AbstractString, eachcol(data_config[:generation_availability]))
+    data_config[:generation_availability][!, string_columns_generation] = Symbol.(data_config[:generation_availability][!, string_columns_generation])
+
+end
+
+function process_data(demand_data, availability_data, scenario, period_duration, timesteps)
+
+  # Filter the data for the one scenario
+  demand_data = filter(row -> row.scenario == scenario, demand_data)
+  generation_availability_data = filter(row -> row.scenario == scenario, availability_data)
+
+  # Scale the demand data so that it is a value between 0 and 1 but store the max
+  max_demand = maximum(demand_data.demand)
+  demand_data.demand = demand_data.demand ./ max_demand
+
+  # Rename to match the TulipaClustering names of :value and :timestep
+  rename!(demand_data, :demand => :value)
+  rename!(demand_data, :time_step => :timestep)
+  rename!(generation_availability_data, :availability => :value)
+  rename!(generation_availability_data, :time_step => :timestep)
+
+  # Combine the demand and availability data into one dataframe in which profile_name is location_technology/demand, then timestep then value
+  demand_data.location = string.(demand_data.location, "_demand")
+  generation_availability_data.location = string.(generation_availability_data.location, "_", generation_availability_data.technology)
+  generation_availability_data = select(generation_availability_data, :location, :timestep, :value, :scenario)
+  combined_data = vcat(demand_data, generation_availability_data)
+  rename!(combined_data, :location => :profile_name)
+
+  # Only select timesteps in time_steps
+  combined_data = filter(row -> row.timestep in timesteps, combined_data)
+ 
+  # Split the data into periods
+  split_into_periods!(combined_data; period_duration=period_duration)
+
+  return combined_data, max_demand
+
 end

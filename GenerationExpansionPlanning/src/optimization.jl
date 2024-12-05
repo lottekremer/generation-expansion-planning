@@ -9,14 +9,15 @@ function run_experiment(data::ExperimentData, optimizer_factory)::ExperimentResu
     T = data.time_steps
     L = data.transmission_lines
     S = data.scenarios
+    P = data.periods
 
     @info "Converting dataframes to dictionaries"
     filter!(row -> row.time_step ∈ T, data.demand)
     filter!(row -> row.scenario ∈ S, data.demand)
     filter!(row -> row.time_step ∈ T, data.generation_availability)
     filter!(row -> row.scenario ∈ S, data.generation_availability)
-    demand = dataframe_to_dict(data.demand, [:location, :time_step, :scenario], :demand)
-    generation_availability = dataframe_to_dict(data.generation_availability, [:location, :technology, :time_step, :scenario], :availability)
+    demand = dataframe_to_dict(data.demand, [:location, :rep_period, :time_step, :scenario], :demand)
+    generation_availability = dataframe_to_dict(data.generation_availability, [:location, :technology, :rep_period, :time_step, :scenario], :availability)
     investment_cost = dataframe_to_dict(data.generation, [:location, :technology], :investment_cost)
 
     variable_cost = dataframe_to_dict(data.generation, [:location, :technology], :variable_cost)
@@ -24,6 +25,9 @@ function run_experiment(data::ExperimentData, optimizer_factory)::ExperimentResu
     ramping_rate = dataframe_to_dict(data.generation, [:location, :technology], :ramping_rate)
     export_capacity = dataframe_to_dict(data.transmission_capacities, [:from, :to], :export_capacity)
     import_capacity = dataframe_to_dict(data.transmission_capacities, [:from, :to], :import_capacity)
+
+    scenario_probabilities = dataframe_to_dict(data.scenario_probabilities, :scenario, :probability)
+    period_weights = data.period_weights
 
     @info "Solving the problem"
     dt = @elapsed begin
@@ -34,13 +38,13 @@ function run_experiment(data::ExperimentData, optimizer_factory)::ExperimentResu
         @variable(model, 0 ≤ total_investment_cost)
         @variable(model, 0 ≤ total_operational_cost)
         @variable(model, 0 ≤ investment[n ∈ N, g ∈ G; (n, g) ∈ NG], integer = !data.relaxation)
-        @variable(model, 0 ≤ production[n ∈ N, g ∈ G, t ∈ T, s ∈ S; (n, g) ∈ NG])
+        @variable(model, 0 ≤ production[n ∈ N, g ∈ G, p ∈ P, t ∈ T, s ∈ S; (n, g) ∈ NG])
         @variable(model,
             -import_capacity[n_from, n_to] ≤
-            line_flow[n_from ∈ N, n_to ∈ N, t ∈ T, s ∈ S; (n_from, n_to) ∈ L] ≤
+            line_flow[n_from ∈ N, n_to ∈ N, p ∈ P, t ∈ T, s ∈ S; (n_from, n_to) ∈ L] ≤
             export_capacity[n_from, n_to]
         )
-        @variable(model, 0 ≤ loss_of_load[n ∈ N, t ∈ T, s ∈ S] ≤ demand[n, t, s])
+        @variable(model, 0 ≤ loss_of_load[n ∈ N, p ∈ P, t ∈ T, s ∈ S] ≤ demand[n, p, t, s])
 
         @info "Precomputing expressions"
         investment_MW = @expression(model, [n ∈ N, g ∈ G; (n, g) ∈ NG], unit_capacity[n, g] * investment[n, g])
@@ -53,28 +57,27 @@ function run_experiment(data::ExperimentData, optimizer_factory)::ExperimentResu
         @info "Adding the constraints"
         @info "Adding the cost constraints"
         @constraint(model, total_investment_cost == sum(investment_cost[n, g] * investment_MW[n, g] for (n, g) ∈ NG))
-        # TODO: add variable probability for scenarios
         @constraint(model,
             total_operational_cost
             ==
-            (1 / length(S))  * (8760 / length(T)) * 
-            (sum(variable_cost[n, g] * production[n, g, t, s] for (n, g) ∈ NG, t ∈ T, s ∈ S)
+            (8760 / (length(T)*sum(period_weights[p] for p ∈ P))) * 
+            (sum(variable_cost[n, g] * production[n, g, p, t, s] * scenario_probabilities[s] * period_weights[p] for (n, g) ∈ NG, p ∈ P, t ∈ T, s ∈ S)
              +
-             data.value_of_lost_load * sum(loss_of_load[n, t, s] for n ∈ N, t ∈ T, s ∈ S))
+             data.value_of_lost_load * sum(loss_of_load[n, p, t, s] * scenario_probabilities[s] * period_weights[p] for n ∈ N, p ∈ P, t ∈ T, s ∈ S))
         )
 
         # Node balance
         @info "Adding the balance constraints"
-        @constraint(model, [n ∈ N, t ∈ T, s ∈ S],
-            sum(production[n, g, t, s] for g ∈ G if (n, g) ∈ NG)
+        @constraint(model, [n ∈ N, p ∈ P, t ∈ T, s ∈ S],
+            sum(production[n, g, p, t, s] for g ∈ G if (n, g) ∈ NG)
             +
-            sum(line_flow[n_from, n_to, t, s] for (n_from, n_to) ∈ L if n_to == n)
+            sum(line_flow[n_from, n_to, p, t, s] for (n_from, n_to) ∈ L if n_to == n)
             -
-            sum(line_flow[n_from, n_to, t, s] for (n_from, n_to) ∈ L if n_from == n)
+            sum(line_flow[n_from, n_to, p, t, s] for (n_from, n_to) ∈ L if n_from == n)
             +
-            loss_of_load[n, t, s]
+            loss_of_load[n, p, t, s]
             ==
-            demand[n, t, s]
+            demand[n, p, t, s]
         )
 
         # Maximum production
@@ -83,19 +86,19 @@ function run_experiment(data::ExperimentData, optimizer_factory)::ExperimentResu
         # always equal to 100%, that is, 1.0. This is why we use
         # get(generation_availability, (n, g, t), 1.0) and not
         # generation_availability[n, g, t]
-        @constraint(model, [n ∈ N, g ∈ G, t ∈ T, s ∈ S; (n, g) ∈ NG],
-            production[n, g, t, s] ≤ get(generation_availability, (n, g, t, s), 1.0) * investment_MW[n, g]
+        @constraint(model, [n ∈ N, g ∈ G, p ∈ P, t ∈ T, s ∈ S; (n, g) ∈ NG],
+            production[n, g, p, t, s] ≤ get(generation_availability, (n, g, p, t, s), 1.0) * investment_MW[n, g]
         )
 
         @info "Adding the ramping constraints"
-        ramping = @expression(model, [n ∈ N, g ∈ G, t ∈ T, s ∈ S; t > 1 && (n, g) ∈ NG],
-            production[n, g, t, s] - production[n, g, t-1, s]
+        ramping = @expression(model, [n ∈ N, g ∈ G, p ∈ P, t ∈ T, s ∈ S; t > 1 && (n, g) ∈ NG],
+            production[n, g, p, t, s] - production[n, g, p, t-1, s]
         )
-        for (n, g, t, s) ∈ eachindex(ramping)
+        for (n, g, p, t, s) ∈ eachindex(ramping)
             # Ramping up
-            @constraint(model, ramping[n, g, t, s] ≤ ramping_rate[n, g] * investment_MW[n, g])
+            @constraint(model, ramping[n, g, p, t, s] ≤ ramping_rate[n, g] * investment_MW[n, g])
             # Ramping down
-            @constraint(model, ramping[n, g, t, s] ≥ -ramping_rate[n, g] * investment_MW[n, g])
+            @constraint(model, ramping[n, g, p, t, s] ≥ -ramping_rate[n, g] * investment_MW[n, g])
         end
 
         # 5. Solve the model
@@ -113,9 +116,9 @@ function run_experiment(data::ExperimentData, optimizer_factory)::ExperimentResu
     investment_decisions_MW = jump_variable_to_df(investment_MW; dim_names=(:location, :technology), value_name=:capacity)
     investment_decisions = leftjoin(investment_decisions_MW, investment_decisions_units, on=[:location, :technology])
 
-    production_decisions = jump_variable_to_df(production; dim_names=(:location, :technology, :time_step, :scenario), value_name=:production)
-    line_flow_decisions = jump_variable_to_df(line_flow; dim_names=(:from, :to, :time_step, :scenario), value_name=:flow)
-    loss_of_load_decisions = jump_variable_to_df(loss_of_load; dim_names=(:location, :time_step, :scenario), value_name=:loss_of_load)
+    production_decisions = jump_variable_to_df(production; dim_names=(:location, :technology, :rep_period, :time_step, :scenario), value_name=:production)
+    line_flow_decisions = jump_variable_to_df(line_flow; dim_names=(:from, :to, :rep_period, :time_step, :scenario), value_name=:flow)
+    loss_of_load_decisions = jump_variable_to_df(loss_of_load; dim_names=(:location, :rep_period, :time_step, :scenario), value_name=:loss_of_load)
 
     return ExperimentResult(
         value.(total_investment_cost),

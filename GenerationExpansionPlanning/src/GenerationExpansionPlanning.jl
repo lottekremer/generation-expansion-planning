@@ -5,6 +5,7 @@ using DataFrames
 using TOML
 using JuMP
 using Dates
+using TulipaClustering
 
 include("data-structures.jl")
 include("io.jl")
