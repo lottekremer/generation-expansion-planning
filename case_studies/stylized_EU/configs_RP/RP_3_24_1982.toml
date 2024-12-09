@@ -16,7 +16,7 @@ transmission_lines = "auto"
 generators = "auto"
 
 [input.rp]
-use_periods = false
+use_periods = true
 number_of_periods = 3
 period_duration = 24
 
