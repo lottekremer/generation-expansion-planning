@@ -1,6 +1,8 @@
 using GenerationExpansionPlanning
 using TulipaClustering
-using Gurobi
+# using Gurobi
+using GLPK
+using HiGHS
 
 config_folder = "case_studies/stylized_EU/configs_RP"
 config_files = readdir(config_folder)
@@ -15,7 +17,9 @@ for config_file in config_files
     experiment_data = ExperimentData(config[:input])
     
     @info "Running the experiments defined by $config_path"
-    experiment_result = run_experiment(experiment_data, Gurobi.Optimizer)
+    # experiment_result = run_experiment(experiment_data, Gurobi.Optimizer)
+    # experiment_result = run_experiment(experiment_data, GLPK.Optimizer)
+    experiment_result = run_experiment(experiment_data, HiGHS.Optimizer)
     
     output_config = config[:output]
     save_result(experiment_result, output_config)
