@@ -60,10 +60,10 @@ function run_experiment(data::ExperimentData, optimizer_factory)::ExperimentResu
         @constraint(model,
             total_operational_cost
             ==
-            (8760 / (length(T)*sum(period_weights[p] for p ∈ P))) * 
-            (sum(variable_cost[n, g] * production[n, g, p, t, s] * scenario_probabilities[s] * period_weights[p] for (n, g) ∈ NG, p ∈ P, t ∈ T, s ∈ S)
+            8760 / (length(T) * Int(sum(period_weights[p] for p ∈ P))) * 
+            (sum(variable_cost[n, g] * production[n, g, p, t, s] * scenario_probabilities[s] * Int(period_weights[p]) for (n, g) ∈ NG, p ∈ P, t ∈ T, s ∈ S)
              +
-             data.value_of_lost_load * sum(loss_of_load[n, p, t, s] * scenario_probabilities[s] * period_weights[p] for n ∈ N, p ∈ P, t ∈ T, s ∈ S))
+             data.value_of_lost_load * sum(loss_of_load[n, p, t, s] * scenario_probabilities[s] * Int(period_weights[p]) for n ∈ N, p ∈ P, t ∈ T, s ∈ S))
         )
 
         # Node balance
