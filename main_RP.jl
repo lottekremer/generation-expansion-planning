@@ -6,7 +6,6 @@ config_folder = "case_studies/stylized_EU/configs_SP"
 config_files = readdir(config_folder)
 
 for config_file in config_files
-    if config_file == "config_all_720.toml"
         config_path = joinpath(config_folder, config_file)
 
         @info "Reading config file $config_path"
@@ -24,5 +23,4 @@ for config_file in config_files
 
         # TODO: Implement fixed investments to check for difference in objective value
         @info "Run the results with fixed investments"
-    end
 end
