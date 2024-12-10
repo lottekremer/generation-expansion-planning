@@ -224,7 +224,7 @@ function addPeriods!(config::Dict{Symbol,Any}, num_periods::Int)
 
     if rp_config[:clustering_type] == "completescenario"
         # Process the data to get correct format for TulipaClustering and cluster
-        data, max_demand = process_data(data_config[:demand], data_config[:generation_availability], scenarios, period_duration, timesteps)
+        data, max_demand = process_data(data_config[:demand], data_config[:generation_availability], scenarios, period_duration, timesteps, rp_config[:clustering_type])
         rp = find_representative_periods(data, rp_config[:number_of_periods])
 
         # Split demand and generation data
@@ -264,14 +264,14 @@ function addPeriods!(config::Dict{Symbol,Any}, num_periods::Int)
 
 end
 
-function process_data(demand_data, availability_data, scenarios, period_duration, timesteps)
+function process_data(demand_data, availability_data, scenarios, period_duration, timesteps, clustering_type)
 
     # Filter the data for the chosen scenarios
     demand_data = filter(row -> row.scenario in scenarios, demand_data)
     generation_availability_data = filter(row -> row.scenario in scenarios, availability_data)
 
     # TODO implement the other options
-    if rp_config[:clustering_type] == "completescenario"
+    if clustering_type == "completescenario"
 
         # Scale the demand data so that it is a value between 0 and 1 but store the max
         max_demand = maximum(demand_data.demand)
