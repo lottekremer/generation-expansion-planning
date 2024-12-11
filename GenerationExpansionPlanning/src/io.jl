@@ -121,8 +121,8 @@ function read_config(config_path::AbstractString)::Dict{Symbol,Any}
         sets_config[:time_steps] = 1:rp_config[:period_duration]
     else
         # Set demand and generation availability to have a rep_period of 1
-        data_config[:demand][!, :rep_period] = ones(size(data_config[:demand], 1))
-        data_config[:generation_availability][!, :rep_period] = ones(size(data_config[:generation_availability], 1))
+        data_config[:demand][!, :rep_period] = ones(Int, size(data_config[:demand], 1))
+        data_config[:generation_availability][!, :rep_period] = ones(Int, size(data_config[:generation_availability], 1))
         
         # Set period and its weights to a list with just a 1 and 1
         rp_config[:periods] = [1]
@@ -150,6 +150,7 @@ function dataframe_to_dict(
     keys::Union{Symbol,Vector{Symbol}},
     value::Symbol
 )::Dict
+    
     return if typeof(keys) <: AbstractVector
         Dict(Tuple.(eachrow(df[!, keys])) .=> Vector(df[!, value]))
     else
@@ -221,6 +222,7 @@ function addPeriods!(config::Dict{Symbol,Any}, num_periods::Int)
     # Create copies to not lose the old data
     data_config[:old_demand] = deepcopy(data_config[:demand])
     data_config[:old_generation] = deepcopy(data_config[:generation_availability])
+    
 
     if rp_config[:clustering_type] == "completescenario"
         # Process the data to get correct format for TulipaClustering and cluster
@@ -243,12 +245,6 @@ function addPeriods!(config::Dict{Symbol,Any}, num_periods::Int)
         data_config[:generation_availability] = select(data_config[:generation_availability], Not(:profile_name))
         rename!(data_config[:generation_availability], :value => :availability)
         rename!(data_config[:generation_availability], :timestep => :time_step)
-
-        println("First 5 rows of generation_availability in complete scenario:")
-        println(first(data_config[:generation_availability], 5))
-        
-        println("First 5 rows of demand in complete scenario:")
-        println(first(data_config[:demand], 5))
 
         # Add period weights
         rp_config[:periods] = 1:num_periods

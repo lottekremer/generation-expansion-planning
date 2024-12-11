@@ -10,6 +10,13 @@ function run_experiment(data::ExperimentData, optimizer_factory)::ExperimentResu
     L = data.transmission_lines
     S = data.scenarios
     P = data.periods
+    
+    @info "Converting dataframes to dictionaries"
+    filter!(row -> row.time_step ∈ T, data.demand)
+    filter!(row -> row.scenario ∈ S, data.demand)
+    filter!(row -> row.scenario ∈ S, data.generation_availability)
+    demand = dataframe_to_dict(data.demand, [:location, :rep_period, :time_step, :scenario], :demand)
+    generation_availability = dataframe_to_dict(data.generation_availability, [:location, :technology, :rep_period, :time_step, :scenario], :availability)
 
     @info "Converting dataframes to dictionaries"
     filter!(row -> row.time_step ∈ T, data.demand)
@@ -27,7 +34,7 @@ function run_experiment(data::ExperimentData, optimizer_factory)::ExperimentResu
     import_capacity = dataframe_to_dict(data.transmission_capacities, [:from, :to], :import_capacity)
 
     scenario_probabilities = dataframe_to_dict(data.scenario_probabilities, :scenario, :probability)
-    period_weights = data.period_weights
+    period_weights = data.period_weights     
 
     @info "Solving the problem"
     dt = @elapsed begin
@@ -60,10 +67,10 @@ function run_experiment(data::ExperimentData, optimizer_factory)::ExperimentResu
         @constraint(model,
             total_operational_cost
             ==
-            8760 / (length(T) * Int(sum(period_weights[p] for p ∈ P))) * 
-            (sum(variable_cost[n, g] * production[n, g, p, t, s] * scenario_probabilities[s] * Int(period_weights[p]) for (n, g) ∈ NG, p ∈ P, t ∈ T, s ∈ S)
+            8760 / (length(T) * sum(period_weights[p] for p ∈ P)) * 
+            (sum(variable_cost[n, g] * production[n, g, p, t, s] * scenario_probabilities[s] * period_weights[p] for (n, g) ∈ NG, p ∈ P, t ∈ T, s ∈ S)
              +
-             data.value_of_lost_load * sum(loss_of_load[n, p, t, s] * scenario_probabilities[s] * Int(period_weights[p]) for n ∈ N, p ∈ P, t ∈ T, s ∈ S))
+             data.value_of_lost_load * sum(loss_of_load[n, p, t, s] * scenario_probabilities[s] * period_weights[p] for n ∈ N, p ∈ P, t ∈ T, s ∈ S))
         )
 
         # Node balance
@@ -150,7 +157,7 @@ function run_fixed_investment(data::ExperimentData, optimizer_factory; initial_r
     demand = dataframe_to_dict(data.demand, [:location, :rep_period, :time_step, :scenario], :demand)
     generation_availability = dataframe_to_dict(data.generation_availability, [:location, :technology, :rep_period, :time_step, :scenario], :availability)
     total_investment_cost = initial_result.total_investment_cost
-    investment = dataframe_to_dict(initial_result.investment_decisions, [:location, :technology], :units)
+    investment = dataframe_to_dict(initial_result.investment, [:location, :technology], :units)
 
     variable_cost = dataframe_to_dict(data.generation, [:location, :technology], :variable_cost)
     unit_capacity = dataframe_to_dict(data.generation, [:location, :technology], :unit_capacity)
