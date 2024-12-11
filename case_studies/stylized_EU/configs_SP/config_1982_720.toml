@@ -16,9 +16,9 @@ transmission_lines = "auto"
 generators = "auto"
 
 [input.rp]
-use_periods = false
-number_of_periods = 10
-period_duration = 24
+use_periods = true
+number_of_periods = 1
+period_duration = 720
 clustering_type = "completescenario"
 
 [output]

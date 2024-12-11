@@ -6,6 +6,7 @@ config_folder = "case_studies/stylized_EU/configs_SP"
 config_files = readdir(config_folder)
 
 for config_file in config_files
+    if config_file == "config_1982_720.toml"
         config_path = joinpath(config_folder, config_file)
 
         @info "Reading config file $config_path"
@@ -21,6 +22,16 @@ for config_file in config_files
         output_config = config[:output]
         save_result(experiment_result, output_config)
 
-        # TODO: Implement fixed investments to check for difference in objective value
-        @info "Run the results with fixed investments"
+        if config[:input][:rp][:use_periods]
+            @info "Run the results with fixed investments"
+            config[:input][:rp][:use_periods] = false
+            config[:input][:data][:demand] = config[:input][:data][:old_demand]
+            config[:input][:data][:generation_availability] = config[:input][:data][:old_generation]
+            experiment_new = ExperimentData(config[:input])
+            result_new = run_fixed_investment(experiment_new, Gurobi.Optimizer; initial_result=experiment_result)
+            output_config = config[:output]
+            save_result(result_new, output_config)
+        end
+    end
+
 end
