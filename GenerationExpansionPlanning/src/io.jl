@@ -95,7 +95,7 @@ function read_config(config_path::AbstractString)::Dict{Symbol,Any}
         sets_config[:time_steps] = 1:sets_config[:time_steps]
     end
 
-    rp_config[:time_frame] = length(sets_config[:time_steps])
+    data_config[:time_frame] = length(sets_config[:time_steps])
 
     if sets_config[:locations] == "auto"
         sets_config[:locations] =
@@ -207,6 +207,7 @@ function save_result(result::ExperimentResult, config::Dict{Symbol,Any})
     save_dataframe(result.production, config[:production])
     save_dataframe(result.line_flow, config[:line_flow])
     save_dataframe(result.loss_of_load, config[:loss_of_load])
+    save_dataframe(result.operational_cost_per_scenario, config[:operational_cost_per_scenario])
 
     scalar_data = Dict(
         "total_cost" => result.total_cost,
@@ -233,8 +234,8 @@ function addPeriods!(config::Dict{Symbol,Any}, num_periods::Int)
     config[:input][:secondStage] = Dict{Symbol, Any}()
     config[:input][:secondStage][:demand] = deepcopy(data_config[:demand])
     config[:input][:secondStage][:generation_availability] = deepcopy(data_config[:generation_availability])
+    config[:input][:secondStage][:scenarios] = deepcopy(sets_config[:scenarios])
     config[:input][:secondStage][:time_steps] = deepcopy(sets_config[:time_steps])
-    config[:input][:secondStage][:time_frame] = length(sets_config[:time_steps])
     config[:input][:secondStage][:scenarios] = deepcopy(scenarios)
 
     if rp_config[:clustering_type] == "completescenario"
@@ -284,9 +285,9 @@ function addPeriods!(config::Dict{Symbol,Any}, num_periods::Int)
         for (index, scenario) in enumerate(scenarios)
             # Treat new scenarios as new days 
             demand_data = filter(row -> row.scenario == scenario && row.time_step in timesteps, data_config[:demand])
-            demand_data[!, :time_temp] = demand_data[!, :time_step] .+ (index - 1) * rp_config[:time_frame]
+            demand_data[!, :time_temp] = demand_data[!, :time_step] .+ (index - 1) * data_config[:time_frame]
             generation_data = filter(row -> row.scenario == scenario && row.time_step in timesteps, data_config[:generation_availability])
-            generation_data[!, :time_temp] = generation_data[!, :time_step] .+ (index - 1) * rp_config[:time_frame]
+            generation_data[!, :time_temp] = generation_data[!, :time_step] .+ (index - 1) * data_config[:time_frame]
             demand_temp = vcat(demand_temp, demand_data)
             generation_temp = vcat(generation_temp, generation_data)
         end

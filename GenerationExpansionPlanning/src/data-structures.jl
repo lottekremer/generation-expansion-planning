@@ -50,7 +50,7 @@ struct ExperimentData
             rp[:period_weights],
             scalars[:value_of_lost_load],
             scalars[:relaxation],
-            rp[:time_frame]
+            data[:time_frame]
         )
     end
 end
@@ -116,6 +116,7 @@ struct ExperimentResult
     total_cost::Float64
     total_investment_cost::Float64
     total_operational_cost::Float64
+    operational_cost_per_scenario::AbstractDataFrame
     investment::AbstractDataFrame
     production::AbstractDataFrame
     line_flow::AbstractDataFrame
@@ -126,6 +127,7 @@ struct ExperimentResult
         total_cost::Float64,
         total_investment_cost::Float64,
         total_operational_cost::Float64,
+        operational_cost_per_scenario::DataFrame,
         investment::DataFrame,
         production::DataFrame,
         line_flow::DataFrame,
@@ -136,6 +138,7 @@ struct ExperimentResult
             total_cost,
             total_investment_cost,
             total_operational_cost,
+            operational_cost_per_scenario,
             investment,
             production,
             line_flow,
