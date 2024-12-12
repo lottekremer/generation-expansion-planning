@@ -12,6 +12,7 @@ struct ExperimentData
     generators::Vector{Tuple{Symbol,Symbol}}
     generation_technologies::Vector{Symbol}
     periods::Vector{Int}
+    periods_per_scenario::Vector{Tuple{Int,Symbol}}
 
     # Dataframes
     demand::AbstractDataFrame
@@ -24,6 +25,7 @@ struct ExperimentData
     # Scalars
     value_of_lost_load::Float64
     relaxation::Bool
+    time_frame::Int
 
     function ExperimentData(config_dict::Dict{Symbol,Any})
         sets = config_dict[:sets]
@@ -39,6 +41,7 @@ struct ExperimentData
             sets[:generators],
             sets[:generation_technologies],
             rp[:periods],
+            rp[:periods_per_scenario],
             data[:demand],
             data[:generation_availability],
             data[:generation],
@@ -47,6 +50,7 @@ struct ExperimentData
             rp[:period_weights],
             scalars[:value_of_lost_load],
             scalars[:relaxation],
+            rp[:time_frame]
         )
     end
 end
@@ -60,6 +64,7 @@ struct SecondStageData
     generators::Vector{Tuple{Symbol,Symbol}}
     generation_technologies::Vector{Symbol}
     periods::Vector{Int}
+    periods_per_scenario::Vector{Tuple{Int,Symbol}}
 
     # Dataframes
     demand::AbstractDataFrame
@@ -74,6 +79,7 @@ struct SecondStageData
     value_of_lost_load::Float64
     relaxation::Bool
     total_investment_cost::Float64
+    time_frame::Int
 
     function SecondStageData(config_dict::Dict{Symbol,Any})
         sets = config_dict[:sets]
@@ -90,6 +96,7 @@ struct SecondStageData
             secondStage[:generators],
             secondStage[:generation_technologies],
             secondStage[:periods],
+            secondStage[:periods_per_scenario],
             secondStage[:demand],
             secondStage[:generation_availability],
             data[:generation],
@@ -99,7 +106,8 @@ struct SecondStageData
             secondStage[:investment],
             scalars[:value_of_lost_load],
             scalars[:relaxation],
-            secondStage[:total_investment_cost]
+            secondStage[:total_investment_cost],
+            secondStage[:time_frame]
         )
     end
 end
@@ -125,7 +133,7 @@ struct ExperimentResult
         runtime::Float64
     )
         return new(
-            total_cost
+            total_cost,
             total_investment_cost,
             total_operational_cost,
             investment,

@@ -95,6 +95,8 @@ function read_config(config_path::AbstractString)::Dict{Symbol,Any}
         sets_config[:time_steps] = 1:sets_config[:time_steps]
     end
 
+    rp_config[:time_frame] = length(sets_config[:time_steps])
+
     if sets_config[:locations] == "auto"
         sets_config[:locations] =
             data_config[:demand].location ∪
@@ -127,17 +129,16 @@ function read_config(config_path::AbstractString)::Dict{Symbol,Any}
         # Set period and its weights to a list with just a 1 and 1
         rp_config[:periods] = [1]
         rp_config[:period_weights] = [1.0]
+
+        # Set periods_per_scenario to be a list of tuples with just a 1 and all scenarios
+        rp_config[:periods_per_scenario] = [(1, scenario) for scenario in sets_config[:scenarios]]
     end
 
     config[:output][:dir] = (config_dir, config[:output][:dir]) |> joinpath |> abspath
 
     # make sure that the values are rounded
-    println("First 24 results of demand before rounding:")
-    println(data_config[:demand][1:24, :demand])
     data_config[:demand][!, :demand] = round.(data_config[:demand][!, :demand]; digits = 8)
     data_config[:generation_availability][!, :availability] = round.(data_config[:generation_availability][!, :availability]; digits = 8)
-    println("First 24 results of demand after rounding:")
-    println(data_config[:demand][1:24, :demand])
 
     return config
 end
@@ -226,90 +227,145 @@ function addPeriods!(config::Dict{Symbol,Any}, num_periods::Int)
     scenarios = sets_config[:scenarios]
     period_duration = rp_config[:period_duration]
     timesteps = sets_config[:time_steps]
+    num_periods = rp_config[:number_of_periods]
 
     # Create copies to not lose the old data
     config[:input][:secondStage] = Dict{Symbol, Any}()
     config[:input][:secondStage][:demand] = deepcopy(data_config[:demand])
     config[:input][:secondStage][:generation_availability] = deepcopy(data_config[:generation_availability])
     config[:input][:secondStage][:time_steps] = deepcopy(sets_config[:time_steps])
-    
+    config[:input][:secondStage][:time_frame] = length(sets_config[:time_steps])
+    config[:input][:secondStage][:scenarios] = deepcopy(scenarios)
 
     if rp_config[:clustering_type] == "completescenario"
         # Process the data to get correct format for TulipaClustering and cluster
-        data, max_demand = process_data(data_config[:demand], data_config[:generation_availability], scenarios, period_duration, timesteps, rp_config[:clustering_type])
-        rp = find_representative_periods(data, rp_config[:number_of_periods])
+        data, max_demand = process_data(data_config[:demand], data_config[:generation_availability], scenarios, period_duration, timesteps)
+        rp = find_representative_periods(data, num_periods)
+        demand_res, generation_res, weights = process_rp(rp, max_demand, num_periods)
 
-        # Split demand and generation data
-        split_values = split.(rp.profiles.profile_name, "_")
-        rp.profiles[!, :location] = getindex.(split_values, 1)
-        rp.profiles[!, :technology] = getindex.(split_values, 2)
-
-        # Get correct demand dataframes
-        data_config[:demand] = filter(row -> row.technology == "demand", rp.profiles)
-        data_config[:demand][!, :demand] = data_config[:demand][!, :value] * max_demand
-        data_config[:demand] = select(data_config[:demand], Not([:technology, :profile_name, :value]))
-        rename!(data_config[:demand], :timestep => :time_step)
-
-        # Get correct generation availability dataframes
-        data_config[:generation_availability] = filter(row -> row.technology != "demand", rp.profiles)
-        data_config[:generation_availability] = select(data_config[:generation_availability], Not(:profile_name))
-        rename!(data_config[:generation_availability], :value => :availability)
-        rename!(data_config[:generation_availability], :timestep => :time_step)
-
-        # Add period weights
+        # Add to config
         rp_config[:periods] = 1:num_periods
-        weights = [sum(rp.weight_matrix[:, col]) for col in 1:rp_config[:number_of_periods]]
         rp_config[:period_weights] = weights
-    end
+        data_config[:demand] = demand_res
+        data_config[:generation_availability] = generation_res
     
+    elseif rp_config[:clustering_type] == "perscenario"
+        demand_total = DataFrame()
+        generation_total = DataFrame()
+        weights_total = []
+        for (index, scenario) in enumerate(scenarios)
+            # Process the data per scenario, representative days get sequenced numbers
+            scenario_data, max_demand = process_data(data_config[:demand], data_config[:generation_availability], [scenario], period_duration, timesteps)
+            scenario_rp = find_representative_periods(scenario_data, num_periods)
+            scenario_rp.profiles[!, :rep_period] = scenario_rp.profiles[!, :rep_period] .+ (index - 1) * num_periods
+
+            # Process results
+            demand_res, generation_res, weights = process_rp(scenario_rp, max_demand, num_periods)
+
+            # Concatenate to the total data
+            if index == 1
+                demand_total = deepcopy(demand_res)
+                generation_total = deepcopy(generation_res)
+                weights_total = deepcopy(weights)
+            else
+                demand_total = vcat(demand_total, demand_res)
+                generation_total = vcat(generation_total, generation_res)
+                weights_total = vcat(weights_total, weights)    
+            end
+        end
+        rp_config[:periods] = 1:(num_periods * length(scenarios))
+        rp_config[:period_weights] = weights_total
+        data_config[:demand] = demand_total
+        data_config[:generation_availability] = generation_total
+
+    elseif rp_config[:clustering_type] == "crosscenario"
+        demand_temp = DataFrame()
+        generation_temp = DataFrame()
+        for (index, scenario) in enumerate(scenarios)
+            # Treat new scenarios as new days 
+            demand_data = filter(row -> row.scenario == scenario && row.time_step in timesteps, data_config[:demand])
+            demand_data[!, :time_temp] = demand_data[!, :time_step] .+ (index - 1) * rp_config[:time_frame]
+            generation_data = filter(row -> row.scenario == scenario && row.time_step in timesteps, data_config[:generation_availability])
+            generation_data[!, :time_temp] = generation_data[!, :time_step] .+ (index - 1) * rp_config[:time_frame]
+            demand_temp = vcat(demand_temp, demand_data)
+            generation_temp = vcat(generation_temp, generation_data)
+        end
+
+        # Rename to be able to use the original function 
+        scenario_time = unique(select(demand_temp, [:scenario, :time_step, :time_temp]))
+        demand_temp = select(demand_temp, Not(:time_step))
+        generation_temp = select(generation_temp, Not(:time_step))
+        rename!(demand_temp, :time_temp => :time_step)
+        rename!(generation_temp, :time_temp => :time_step)
+        timesteps = 1:maximum(demand_temp.time_step)
+        scenario_time[!, :period] = Int.(floor.((scenario_time.time_temp .- 1) ./ period_duration) .+ 1)
+
+        # Cluster based on this data and drop the scenario column
+        data, max_demand = process_data(demand_temp, generation_temp, scenarios, period_duration, timesteps)
+        data = select(data, Not(:scenario)) 
+        rp = find_representative_periods(data, num_periods)
+        demand_res, generation_res, weights = process_rp(rp, max_demand, num_periods)
+
+        # Put the sparse matrix in a dataframe for easier indexing
+        row_indices, col_indices, values = findnz(rp.weight_matrix)
+        weight_df = DataFrame(period = row_indices, rep_period = col_indices, weight = values)
+        weight_df[!, :scenario] = scenarios[Int.(ceil.(weight_df.period ./ num_periods)).% length(scenarios) .+ 1]
+
+        # Add scenario column with "cross" to the demand and generation data and save secondStage_config[:scenarios] = scenarios
+        demand_res[!, :scenario] .= "cross"
+        generation_res[!, :scenario] .= "cross"
+    
+        # Add to config 
+        # TODO: it is now assumed that the weights are the same for each scenario, this should be changed
+        rp_config[:periods] = 1:(num_periods)
+        rp_config[:period_weights] = weights
+        data_config[:demand] = demand_res
+        data_config[:generation_availability] = generation_res
+        sets_config[:scenarios] = Symbol.(["cross"])
+        data_config[:scenario_probabilities] = DataFrame(scenario = Symbol.(["cross"]), probability = [1/length(scenarios)])
+    else
+        error("Invalid clustering type specified in the configuration.")
+    end
+
     string_columns_demand = findall(col -> eltype(col) <: AbstractString, eachcol(data_config[:demand]))
     data_config[:demand][!, string_columns_demand] = Symbol.(data_config[:demand][!, string_columns_demand])
 
     string_columns_generation = findall(col -> eltype(col) <: AbstractString, eachcol(data_config[:generation_availability]))
     data_config[:generation_availability][!, string_columns_generation] = Symbol.(data_config[:generation_availability][!, string_columns_generation])
 
+    # Set periods_per_scenario to be a list of unique tuples with all combinations of rep_period and scenario in demand
+    rp_config[:periods_per_scenario] = unique(Tuple.(map(collect, zip(data_config[:demand].rep_period, data_config[:demand].scenario))))
+
 end
 
-function process_data(demand_data, availability_data, scenarios, period_duration, timesteps, clustering_type)
+function process_data(demand_data, availability_data, scenarios, period_duration, timesteps)
 
     # Filter the data for the chosen scenarios
     demand_data = filter(row -> row.scenario in scenarios, demand_data)
     generation_availability_data = filter(row -> row.scenario in scenarios, availability_data)
 
-    # TODO implement the other options
-    if clustering_type == "completescenario"
+    # Scale the demand data so that it is a value between 0 and 1 but store the max
+    max_demand = maximum(demand_data.demand)
+    demand_data.demand = demand_data.demand ./ max_demand
 
-        # Scale the demand data so that it is a value between 0 and 1 but store the max
-        max_demand = maximum(demand_data.demand)
-        demand_data.demand = demand_data.demand ./ max_demand
+    # Rename to match the TulipaClustering names of :value and :timestep
+    rename!(demand_data, :demand => :value)
+    rename!(demand_data, :time_step => :timestep)
+    rename!(generation_availability_data, :availability => :value)
+    rename!(generation_availability_data, :time_step => :timestep)
 
-        # Rename to match the TulipaClustering names of :value and :timestep
-        rename!(demand_data, :demand => :value)
-        rename!(demand_data, :time_step => :timestep)
-        rename!(generation_availability_data, :availability => :value)
-        rename!(generation_availability_data, :time_step => :timestep)
+    # Combine the demand and availability data into one dataframe in which profile_name is location_technology/demand, then timestep then value
+    demand_data.location = string.(demand_data.location, "_demand")
+    generation_availability_data.location = string.(generation_availability_data.location, "_", generation_availability_data.technology)
+    generation_availability_data = select(generation_availability_data, :location, :timestep, :value, :scenario)
+    combined_data = vcat(demand_data, generation_availability_data)
+    rename!(combined_data, :location => :profile_name)
 
-        # Combine the demand and availability data into one dataframe in which profile_name is location_technology/demand, then timestep then value
-        demand_data.location = string.(demand_data.location, "_demand")
-        generation_availability_data.location = string.(generation_availability_data.location, "_", generation_availability_data.technology)
-        generation_availability_data = select(generation_availability_data, :location, :timestep, :value, :scenario)
-        combined_data = vcat(demand_data, generation_availability_data)
-        rename!(combined_data, :location => :profile_name)
-
-        # Only select timesteps in time_steps
-        combined_data = filter(row -> row.timestep in timesteps, combined_data)
-        
-        # Split the data into periods
-        split_into_periods!(combined_data; period_duration=period_duration)
-
-    elseif rp_config[:clustering_type] == "perscenario"
-        # Process data per scenario
-        error("Not yet implemented")
-    elseif rp_config[:clustering_type] == "crosscenario"
-        error("Not yet implemented")
-    else
-        error("Invalid clustering type specified in the configuration.")
-    end
+    # Only select timesteps in time_steps
+    combined_data = filter(row -> row.timestep in timesteps, combined_data)
+    
+    # Split the data into periods
+    split_into_periods!(combined_data; period_duration=period_duration)
 
     return combined_data, max_demand
 
@@ -340,4 +396,28 @@ function edit_config(config::Dict{Symbol,Any}, result::ExperimentResult)
     secondStage_config[:generation_availability][!, :availability] = round.(secondStage_config[:generation_availability][!, :availability]; digits = 8)
 
     return config
+end
+
+function process_rp(rp, max_demand::Float64, num_periods)
+    # Split demand and generation data
+    split_values = split.(rp.profiles.profile_name, "_")
+    rp.profiles[!, :location] = getindex.(split_values, 1)
+    rp.profiles[!, :technology] = getindex.(split_values, 2)
+
+    # Get correct demand dataframes
+    demand_res = filter(row -> row.technology == "demand", rp.profiles)
+    demand_res[!, :demand] = demand_res[!, :value] * max_demand
+    demand_res = select(demand_res, Not([:technology, :profile_name, :value]))
+    rename!(demand_res, :timestep => :time_step)
+
+    # Get correct generation availability dataframes
+    generation_res = filter(row -> row.technology != "demand", rp.profiles)
+    generation_res = select(generation_res, Not(:profile_name))
+    rename!(generation_res, :value => :availability)
+    rename!(generation_res, :timestep => :time_step)
+
+    # Add period weights
+    weights = [sum(rp.weight_matrix[:, col]) for col in 1:num_periods]
+
+    return demand_res, generation_res, weights
 end

@@ -10,13 +10,16 @@ scenario_probabilities = "auto"
 
 [input.sets]
 time_steps = 720
-scenarios = ["1982"]
+scenarios = "auto"
 locations = "auto"
 transmission_lines = "auto"
 generators = "auto"
 
 [input.rp]
-use_periods = false
+use_periods = true
+number_of_periods = 10
+period_duration = 24
+clustering_type = "perscenario"
 
 [output]
 dir = "output"

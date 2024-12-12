@@ -10,6 +10,7 @@ function run_experiment(data::ExperimentData, optimizer_factory)::Tuple{Experime
     L = data.transmission_lines
     S = data.scenarios
     P = data.periods
+    PS = data.periods_per_scenario
     
     @info "Converting dataframes to dictionaries"
     filter!(row -> row.time_step ∈ T, data.demand)
@@ -27,7 +28,8 @@ function run_experiment(data::ExperimentData, optimizer_factory)::Tuple{Experime
     import_capacity = dataframe_to_dict(data.transmission_capacities, [:from, :to], :import_capacity)
 
     scenario_probabilities = dataframe_to_dict(data.scenario_probabilities, :scenario, :probability)
-    period_weights = data.period_weights    
+    period_weights = data.period_weights   
+    tf = data.time_frame 
     
     input_data = Dict(
         "locations" => N,
@@ -37,6 +39,7 @@ function run_experiment(data::ExperimentData, optimizer_factory)::Tuple{Experime
         "transmission_lines" => L,
         "scenarios" => S,
         "periods" => P,
+        "periods_per_scenario" => PS,
         "demand" => demand,
         "generation_availability" => generation_availability,
         "investment_cost" => investment_cost,
@@ -58,13 +61,13 @@ function run_experiment(data::ExperimentData, optimizer_factory)::Tuple{Experime
         @variable(model, 0 ≤ total_investment_cost)
         @variable(model, 0 ≤ total_operational_cost)
         @variable(model, 0 ≤ investment[n ∈ N, g ∈ G; (n, g) ∈ NG], integer = !data.relaxation)
-        @variable(model, 0 ≤ production[n ∈ N, g ∈ G, p ∈ P, t ∈ T, s ∈ S; (n, g) ∈ NG])
+        @variable(model, 0 ≤ production[n ∈ N, g ∈ G, p ∈ P, t ∈ T, s ∈ S; (n, g) ∈ NG && (p, s) ∈ PS])
         @variable(model,
             -import_capacity[n_from, n_to] ≤
-            line_flow[n_from ∈ N, n_to ∈ N, p ∈ P, t ∈ T, s ∈ S; (n_from, n_to) ∈ L] ≤
+            line_flow[n_from ∈ N, n_to ∈ N, p ∈ P, t ∈ T, s ∈ S; (n_from, n_to) ∈ L && (p, s) ∈ PS] ≤
             export_capacity[n_from, n_to]
         )
-        @variable(model, 0 ≤ loss_of_load[n ∈ N, p ∈ P, t ∈ T, s ∈ S] ≤ demand[n, p, t, s])
+        @variable(model, 0 ≤ loss_of_load[n ∈ N, p ∈ P, t ∈ T, s ∈ S; (p, s) ∈ PS] ≤ demand[n, p, t, s])
 
         @info "Precomputing expressions"
         investment_MW = @expression(model, [n ∈ N, g ∈ G; (n, g) ∈ NG], unit_capacity[n, g] * investment[n, g])
@@ -80,15 +83,15 @@ function run_experiment(data::ExperimentData, optimizer_factory)::Tuple{Experime
         @constraint(model,
             total_operational_cost
             ==
-            8760 / (length(T) * sum(period_weights[p] for p ∈ P)) * 
-            (sum(variable_cost[n, g] * production[n, g, p, t, s] * scenario_probabilities[s] * period_weights[p] for (n, g) ∈ NG, p ∈ P, t ∈ T, s ∈ S)
+            8760 / tf * 
+            (sum(variable_cost[n, g] * production[n, g, p, t, s] * scenario_probabilities[s] * period_weights[p] for (n, g) ∈ NG, (p, s) ∈ PS, t ∈ T)
              +
-             data.value_of_lost_load * sum(loss_of_load[n, p, t, s] * scenario_probabilities[s] * period_weights[p] for n ∈ N, p ∈ P, t ∈ T, s ∈ S))
+             data.value_of_lost_load * sum(loss_of_load[n, p, t, s] * scenario_probabilities[s] * period_weights[p] for n ∈ N, (p, s) ∈ PS, t ∈ T))
         )
 
         # Node balance
         @info "Adding the balance constraints"
-        @constraint(model, [n ∈ N, p ∈ P, t ∈ T, s ∈ S],
+        @constraint(model, [n ∈ N, p ∈ P, t ∈ T, s ∈ S; (p, s) ∈ PS],
             sum(production[n, g, p, t, s] for g ∈ G if (n, g) ∈ NG)
             +
             sum(line_flow[n_from, n_to, p, t, s] for (n_from, n_to) ∈ L if n_to == n)
@@ -106,12 +109,12 @@ function run_experiment(data::ExperimentData, optimizer_factory)::Tuple{Experime
         # always equal to 100%, that is, 1.0. This is why we use
         # get(generation_availability, (n, g, t), 1.0) and not
         # generation_availability[n, g, t]
-        @constraint(model, [n ∈ N, g ∈ G, p ∈ P, t ∈ T, s ∈ S; (n, g) ∈ NG],
+        @constraint(model, [n ∈ N, g ∈ G, p ∈ P, t ∈ T, s ∈ S; (n, g) ∈ NG && (p, s) ∈ PS],
             production[n, g, p, t, s] ≤ get(generation_availability, (n, g, p, t, s), 1.0) * investment_MW[n, g]
         )
 
         @info "Adding the ramping constraints"
-        ramping = @expression(model, [n ∈ N, g ∈ G, p ∈ P, t ∈ T, s ∈ S; t > 1 && (n, g) ∈ NG],
+        ramping = @expression(model, [n ∈ N, g ∈ G, p ∈ P, t ∈ T, s ∈ S; t > 1 && (n, g) ∈ NG && (p, s) ∈ PS],
             production[n, g, p, t, s] - production[n, g, p, t-1, s]
         )
         for (n, g, p, t, s) ∈ eachindex(ramping)
@@ -141,7 +144,7 @@ function run_experiment(data::ExperimentData, optimizer_factory)::Tuple{Experime
     loss_of_load_decisions = jump_variable_to_df(loss_of_load; dim_names=(:location, :rep_period, :time_step, :scenario), value_name=:loss_of_load)
     total_cost = value.(total_operational_cost)+value.(total_investment_cost)
 
-    return ExperimentResult(total_cost
+    return ExperimentResult(total_cost,
         value.(total_investment_cost),
         value.(total_operational_cost),
         investment_decisions,
@@ -162,6 +165,7 @@ function run_fixed_investment(data::SecondStageData, optimizer_factory)::Tuple{E
     L = data.transmission_lines
     S = data.scenarios
     P = data.periods
+    PS = data.periods_per_scenario
 
     @info "Converting dataframes to dictionaries"
     filter!(row -> row.time_step ∈ T, data.demand)
@@ -183,6 +187,7 @@ function run_fixed_investment(data::SecondStageData, optimizer_factory)::Tuple{E
 
     scenario_probabilities = dataframe_to_dict(data.scenario_probabilities, :scenario, :probability)
     period_weights = data.period_weights
+    tf = data.time_frame 
 
     input_data = Dict(
         "locations" => N,
@@ -192,6 +197,7 @@ function run_fixed_investment(data::SecondStageData, optimizer_factory)::Tuple{E
         "transmission_lines" => L,
         "scenarios" => S,
         "periods" => P,
+        "periods_per_scenario" => PS,
         "demand" => demand,
         "generation_availability" => generation_availability,
         "variable_cost" => variable_cost,
@@ -210,10 +216,10 @@ function run_fixed_investment(data::SecondStageData, optimizer_factory)::Tuple{E
         model = JuMP.Model(optimizer_factory)
         @info "Adding the variables"
         @variable(model, 0 ≤ total_operational_cost)
-        @variable(model, 0 ≤ production[n ∈ N, g ∈ G, p ∈ P, t ∈ T, s ∈ S; (n, g) ∈ NG])
+        @variable(model, 0 ≤ production[n ∈ N, g ∈ G, p ∈ P, t ∈ T, s ∈ S; (n, g) ∈ NG && (p, s) ∈ PS])
         @variable(model,
             -import_capacity[n_from, n_to] ≤
-            line_flow[n_from ∈ N, n_to ∈ N, p ∈ P, t ∈ T, s ∈ S; (n_from, n_to) ∈ L] ≤
+            line_flow[n_from ∈ N, n_to ∈ N, p ∈ P, t ∈ T, s ∈ S; (n_from, n_to) ∈ L && (p,s) ∈ PS] ≤
             export_capacity[n_from, n_to]
         )
         @variable(model, 0 ≤ loss_of_load[n ∈ N, p ∈ P, t ∈ T, s ∈ S] ≤ demand[n, p, t, s])
@@ -228,15 +234,15 @@ function run_fixed_investment(data::SecondStageData, optimizer_factory)::Tuple{E
         @constraint(model,
             total_operational_cost
             ==
-            8760 / (length(T) * sum(period_weights[p] for p ∈ P)) * 
-            (sum(variable_cost[n, g] * production[n, g, p, t, s] * scenario_probabilities[s] * period_weights[p] for (n, g) ∈ NG, p ∈ P, t ∈ T, s ∈ S)
+            8760 / tf * 
+            (sum(variable_cost[n, g] * production[n, g, p, t, s] * scenario_probabilities[s] * period_weights[p] for (n, g) ∈ NG, (p,s) ∈ PS, t ∈ T)
              +
-             data.value_of_lost_load * sum(loss_of_load[n, p, t, s] * scenario_probabilities[s] * period_weights[p] for n ∈ N, p ∈ P, t ∈ T, s ∈ S))
+             data.value_of_lost_load * sum(loss_of_load[n, p, t, s] * scenario_probabilities[s] * period_weights[p] for n ∈ N, (p,s) ∈ PS, t ∈ T))
         )
 
         # Node balance
         @info "Adding the balance constraints"
-        @constraint(model, [n ∈ N, p ∈ P, t ∈ T, s ∈ S],
+        @constraint(model, [n ∈ N, p ∈ P, t ∈ T, s ∈ S; (p, s) ∈ PS],
             sum(production[n, g, p, t, s] for g ∈ G if (n, g) ∈ NG)
             +
             sum(line_flow[n_from, n_to, p, t, s] for (n_from, n_to) ∈ L if n_to == n)
@@ -250,12 +256,12 @@ function run_fixed_investment(data::SecondStageData, optimizer_factory)::Tuple{E
 
         # Maximum production
         @info "Adding the maximum production constraints"
-        @constraint(model, [n ∈ N, g ∈ G, p ∈ P, t ∈ T, s ∈ S; (n, g) ∈ NG],
+        @constraint(model, [n ∈ N, g ∈ G, p ∈ P, t ∈ T, s ∈ S; (n, g) ∈ NG && (p, s) ∈ PS],
             production[n, g, p, t, s] ≤ get(generation_availability, (n, g, p, t, s), 1.0) * investment_MW[n, g]
         )
 
         @info "Adding the ramping constraints"
-        ramping = @expression(model, [n ∈ N, g ∈ G, p ∈ P, t ∈ T, s ∈ S; t > 1 && (n, g) ∈ NG],
+        ramping = @expression(model, [n ∈ N, g ∈ G, p ∈ P, t ∈ T, s ∈ S; t > 1 && (n, g) ∈ NG && (p, s) ∈ PS],
             production[n, g, p, t, s] - production[n, g, p, t-1, s]
         )
         for (n, g, p, t, s) ∈ eachindex(ramping)

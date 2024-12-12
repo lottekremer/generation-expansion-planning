@@ -6,6 +6,7 @@ using TOML
 using JuMP
 using Dates
 using TulipaClustering
+using SparseArrays
 
 include("data-structures.jl")
 include("io.jl")
