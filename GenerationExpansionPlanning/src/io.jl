@@ -1,4 +1,4 @@
-export read_config, dataframe_to_dict, jump_variable_to_df, save_result
+export read_config, dataframe_to_dict, jump_variable_to_df, save_result, edit_config
 
 """
     keys_to_symbols(dict::AbstractDict{String,Any}; recursive::Bool=true)::Dict{Symbol,Any}
@@ -131,6 +131,14 @@ function read_config(config_path::AbstractString)::Dict{Symbol,Any}
 
     config[:output][:dir] = (config_dir, config[:output][:dir]) |> joinpath |> abspath
 
+    # make sure that the values are rounded
+    println("First 24 results of demand before rounding:")
+    println(data_config[:demand][1:24, :demand])
+    data_config[:demand][!, :demand] = round.(data_config[:demand][!, :demand]; digits = 8)
+    data_config[:generation_availability][!, :availability] = round.(data_config[:generation_availability][!, :availability]; digits = 8)
+    println("First 24 results of demand after rounding:")
+    println(data_config[:demand][1:24, :demand])
+
     return config
 end
 
@@ -150,7 +158,6 @@ function dataframe_to_dict(
     keys::Union{Symbol,Vector{Symbol}},
     value::Symbol
 )::Dict
-    
     return if typeof(keys) <: AbstractVector
         Dict(Tuple.(eachrow(df[!, keys])) .=> Vector(df[!, value]))
     else
@@ -201,6 +208,7 @@ function save_result(result::ExperimentResult, config::Dict{Symbol,Any})
     save_dataframe(result.loss_of_load, config[:loss_of_load])
 
     scalar_data = Dict(
+        "total_cost" => result.total_cost,
         "total_investment_cost" => result.total_investment_cost,
         "total_operational_cost" => result.total_operational_cost,
         "runtime" => result.runtime,
@@ -220,8 +228,10 @@ function addPeriods!(config::Dict{Symbol,Any}, num_periods::Int)
     timesteps = sets_config[:time_steps]
 
     # Create copies to not lose the old data
-    data_config[:old_demand] = deepcopy(data_config[:demand])
-    data_config[:old_generation] = deepcopy(data_config[:generation_availability])
+    config[:input][:secondStage] = Dict{Symbol, Any}()
+    config[:input][:secondStage][:demand] = deepcopy(data_config[:demand])
+    config[:input][:secondStage][:generation_availability] = deepcopy(data_config[:generation_availability])
+    config[:input][:secondStage][:time_steps] = deepcopy(sets_config[:time_steps])
     
 
     if rp_config[:clustering_type] == "completescenario"
@@ -303,4 +313,31 @@ function process_data(demand_data, availability_data, scenarios, period_duration
 
     return combined_data, max_demand
 
+end
+
+function edit_config(config::Dict{Symbol,Any}, result::ExperimentResult)
+    data_config = config[:input][:data]
+    sets_config = config[:input][:sets]
+    rp_config = config[:input][:rp]
+    secondStage_config = config[:input][:secondStage]   
+
+    # Set period and its weights to a list with just a 1 and 1
+    secondStage_config[:demand][!, :rep_period] = ones(Int, size(secondStage_config[:demand], 1))
+    secondStage_config[:generation_availability][!, :rep_period] = ones(Int, size(secondStage_config[:generation_availability], 1))
+    secondStage_config[:periods] = [1]
+    secondStage_config[:period_weights] = [1.0]
+
+    # Set investment field
+    secondStage_config[:investment] = result.investment
+    secondStage_config[:total_investment_cost] = result.total_investment_cost
+
+    # Deduce new set NG of location + generation technology
+    secondStage_config[:generators] = Tuple.(map(collect, zip(result.investment.location, result.investment.technology)))
+    secondStage_config[:generation_technologies] = unique([g[2] for g ∈ sets_config[:generators]])
+
+    # Make sure that the values are rounded
+    secondStage_config[:demand][!, :demand] = round.(secondStage_config[:demand][!, :demand]; digits = 8)
+    secondStage_config[:generation_availability][!, :availability] = round.(secondStage_config[:generation_availability][!, :availability]; digits = 8)
+
+    return config
 end

@@ -1,6 +1,6 @@
 export run_experiment, run_fixed_investment
 
-function run_experiment(data::ExperimentData, optimizer_factory)::ExperimentResult
+function run_experiment(data::ExperimentData, optimizer_factory)::Tuple{ExperimentResult, Dict{String, Any}}
     # 1. Extract data into local variables
     @info "Reading the sets"
     N = data.locations
@@ -11,13 +11,6 @@ function run_experiment(data::ExperimentData, optimizer_factory)::ExperimentResu
     S = data.scenarios
     P = data.periods
     
-    @info "Converting dataframes to dictionaries"
-    filter!(row -> row.time_step ∈ T, data.demand)
-    filter!(row -> row.scenario ∈ S, data.demand)
-    filter!(row -> row.scenario ∈ S, data.generation_availability)
-    demand = dataframe_to_dict(data.demand, [:location, :rep_period, :time_step, :scenario], :demand)
-    generation_availability = dataframe_to_dict(data.generation_availability, [:location, :technology, :rep_period, :time_step, :scenario], :availability)
-
     @info "Converting dataframes to dictionaries"
     filter!(row -> row.time_step ∈ T, data.demand)
     filter!(row -> row.scenario ∈ S, data.demand)
@@ -34,7 +27,27 @@ function run_experiment(data::ExperimentData, optimizer_factory)::ExperimentResu
     import_capacity = dataframe_to_dict(data.transmission_capacities, [:from, :to], :import_capacity)
 
     scenario_probabilities = dataframe_to_dict(data.scenario_probabilities, :scenario, :probability)
-    period_weights = data.period_weights     
+    period_weights = data.period_weights    
+    
+    input_data = Dict(
+        "locations" => N,
+        "generation_technologies" => G,
+        "generators" => NG,
+        "time_steps" => T,
+        "transmission_lines" => L,
+        "scenarios" => S,
+        "periods" => P,
+        "demand" => demand,
+        "generation_availability" => generation_availability,
+        "investment_cost" => investment_cost,
+        "variable_cost" => variable_cost,
+        "unit_capacity" => unit_capacity,
+        "ramping_rate" => ramping_rate,
+        "export_capacity" => export_capacity,
+        "import_capacity" => import_capacity,
+        "scenario_probabilities" => scenario_probabilities,
+        "period_weights" => period_weights
+    )
 
     @info "Solving the problem"
     dt = @elapsed begin
@@ -126,8 +139,9 @@ function run_experiment(data::ExperimentData, optimizer_factory)::ExperimentResu
     production_decisions = jump_variable_to_df(production; dim_names=(:location, :technology, :rep_period, :time_step, :scenario), value_name=:production)
     line_flow_decisions = jump_variable_to_df(line_flow; dim_names=(:from, :to, :rep_period, :time_step, :scenario), value_name=:flow)
     loss_of_load_decisions = jump_variable_to_df(loss_of_load; dim_names=(:location, :rep_period, :time_step, :scenario), value_name=:loss_of_load)
+    total_cost = value.(total_operational_cost)+value.(total_investment_cost)
 
-    return ExperimentResult(
+    return ExperimentResult(total_cost
         value.(total_investment_cost),
         value.(total_operational_cost),
         investment_decisions,
@@ -135,10 +149,10 @@ function run_experiment(data::ExperimentData, optimizer_factory)::ExperimentResu
         line_flow_decisions,
         loss_of_load_decisions,
         dt
-    )
+    ), input_data
 end
 
-function run_fixed_investment(data::ExperimentData, optimizer_factory; initial_result::ExperimentResult)::ExperimentResult
+function run_fixed_investment(data::SecondStageData, optimizer_factory)::Tuple{ExperimentResult, Dict{String, Any}}
     # 1. Extract data into local variables
     @info "Reading the sets"
     N = data.locations
@@ -156,8 +170,10 @@ function run_fixed_investment(data::ExperimentData, optimizer_factory; initial_r
     filter!(row -> row.scenario ∈ S, data.generation_availability)
     demand = dataframe_to_dict(data.demand, [:location, :rep_period, :time_step, :scenario], :demand)
     generation_availability = dataframe_to_dict(data.generation_availability, [:location, :technology, :rep_period, :time_step, :scenario], :availability)
-    total_investment_cost = initial_result.total_investment_cost
-    investment = dataframe_to_dict(initial_result.investment, [:location, :technology], :units)
+    
+    total_investment_cost = data.total_investment_cost
+    investment_MW = dataframe_to_dict(data.investment, [:location, :technology], :capacity)
+    investment = dataframe_to_dict(data.investment, [:location, :technology], :units)
 
     variable_cost = dataframe_to_dict(data.generation, [:location, :technology], :variable_cost)
     unit_capacity = dataframe_to_dict(data.generation, [:location, :technology], :unit_capacity)
@@ -167,6 +183,25 @@ function run_fixed_investment(data::ExperimentData, optimizer_factory; initial_r
 
     scenario_probabilities = dataframe_to_dict(data.scenario_probabilities, :scenario, :probability)
     period_weights = data.period_weights
+
+    input_data = Dict(
+        "locations" => N,
+        "generation_technologies" => G,
+        "generators" => NG,
+        "time_steps" => T,
+        "transmission_lines" => L,
+        "scenarios" => S,
+        "periods" => P,
+        "demand" => demand,
+        "generation_availability" => generation_availability,
+        "variable_cost" => variable_cost,
+        "unit_capacity" => unit_capacity,
+        "ramping_rate" => ramping_rate,
+        "export_capacity" => export_capacity,
+        "import_capacity" => import_capacity,
+        "scenario_probabilities" => scenario_probabilities,
+        "period_weights" => period_weights
+    )
 
     @info "Solving the problem"
     dt = @elapsed begin
@@ -183,12 +218,9 @@ function run_fixed_investment(data::ExperimentData, optimizer_factory; initial_r
         )
         @variable(model, 0 ≤ loss_of_load[n ∈ N, p ∈ P, t ∈ T, s ∈ S] ≤ demand[n, p, t, s])
 
-        @info "Precomputing expressions"
-        investment_MW = @expression(model, [n ∈ N, g ∈ G; (n, g) ∈ NG], unit_capacity[n, g] * investment[n, g])
-
         # 3. Add an objective to the model
         @info "Adding the objective"
-        @objective(model, Min, total_investment_cost + total_operational_cost)
+        @objective(model, Min, total_operational_cost)
 
         # 4. Add constraints to the model
         @info "Adding the constraints"
@@ -196,10 +228,10 @@ function run_fixed_investment(data::ExperimentData, optimizer_factory; initial_r
         @constraint(model,
             total_operational_cost
             ==
-            8760 / (length(T) * Int(sum(period_weights[p] for p ∈ P))) * 
-            (sum(variable_cost[n, g] * production[n, g, p, t, s] * scenario_probabilities[s] * Int(period_weights[p]) for (n, g) ∈ NG, p ∈ P, t ∈ T, s ∈ S)
+            8760 / (length(T) * sum(period_weights[p] for p ∈ P)) * 
+            (sum(variable_cost[n, g] * production[n, g, p, t, s] * scenario_probabilities[s] * period_weights[p] for (n, g) ∈ NG, p ∈ P, t ∈ T, s ∈ S)
              +
-             data.value_of_lost_load * sum(loss_of_load[n, p, t, s] * scenario_probabilities[s] * Int(period_weights[p]) for n ∈ N, p ∈ P, t ∈ T, s ∈ S))
+             data.value_of_lost_load * sum(loss_of_load[n, p, t, s] * scenario_probabilities[s] * period_weights[p] for n ∈ N, p ∈ P, t ∈ T, s ∈ S))
         )
 
         # Node balance
@@ -241,14 +273,16 @@ function run_fixed_investment(data::ExperimentData, optimizer_factory; initial_r
     production_decisions = jump_variable_to_df(production; dim_names=(:location, :technology, :rep_period, :time_step, :scenario), value_name=:production)
     line_flow_decisions = jump_variable_to_df(line_flow; dim_names=(:from, :to, :rep_period, :time_step, :scenario), value_name=:flow)
     loss_of_load_decisions = jump_variable_to_df(loss_of_load; dim_names=(:location, :rep_period, :time_step, :scenario), value_name=:loss_of_load)
+    total_cost = value.(total_operational_cost)+value.(total_investment_cost)
 
     return ExperimentResult(
+        total_cost,
         value.(total_investment_cost),
         value.(total_operational_cost),
-        investment_decisions,
+        data.investment,
         production_decisions,
         line_flow_decisions,
         loss_of_load_decisions,
         dt
-    )
+    ), input_data
 end

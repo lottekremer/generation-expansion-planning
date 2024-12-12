@@ -9,16 +9,16 @@ scalars = "scalars.toml"
 scenario_probabilities = "auto"
 
 [input.sets]
-time_steps = 720
+time_steps = 100
 scenarios = ["1982"]
 locations = "auto"
 transmission_lines = "auto"
 generators = "auto"
 
 [input.rp]
-use_periods = false
+use_periods = true
 number_of_periods = 1
-period_duration = 720
+period_duration = 100
 clustering_type = "completescenario"
 
 [output]

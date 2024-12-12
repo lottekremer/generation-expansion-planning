@@ -1,4 +1,4 @@
-export ExperimentData, ExperimentResult
+export ExperimentData, ExperimentResult, SecondStageData
 
 """
 Data needed to run a single experiment (i.e., a single optimization model)
@@ -51,7 +51,61 @@ struct ExperimentData
     end
 end
 
+struct SecondStageData
+    # Sets
+    time_steps::Vector{Int}
+    locations::Vector{Symbol}
+    scenarios::Vector{Symbol}
+    transmission_lines::Vector{Tuple{Symbol,Symbol}}
+    generators::Vector{Tuple{Symbol,Symbol}}
+    generation_technologies::Vector{Symbol}
+    periods::Vector{Int}
+
+    # Dataframes
+    demand::AbstractDataFrame
+    generation_availability::AbstractDataFrame
+    generation::AbstractDataFrame
+    transmission_capacities::AbstractDataFrame
+    scenario_probabilities::AbstractDataFrame
+    period_weights::Vector{Float64}
+    investment::AbstractDataFrame
+
+    # Scalars
+    value_of_lost_load::Float64
+    relaxation::Bool
+    total_investment_cost::Float64
+
+    function SecondStageData(config_dict::Dict{Symbol,Any})
+        sets = config_dict[:sets]
+        data = config_dict[:data]
+        scalars = data[:scalars]
+        rp = config_dict[:rp]
+        secondStage = config_dict[:secondStage]
+
+        return new(
+            secondStage[:time_steps],
+            sets[:locations],
+            sets[:scenarios],
+            sets[:transmission_lines],
+            secondStage[:generators],
+            secondStage[:generation_technologies],
+            secondStage[:periods],
+            secondStage[:demand],
+            secondStage[:generation_availability],
+            data[:generation],
+            data[:transmission_lines],
+            data[:scenario_probabilities],
+            secondStage[:period_weights],
+            secondStage[:investment],
+            scalars[:value_of_lost_load],
+            scalars[:relaxation],
+            secondStage[:total_investment_cost]
+        )
+    end
+end
+
 struct ExperimentResult
+    total_cost::Float64
     total_investment_cost::Float64
     total_operational_cost::Float64
     investment::AbstractDataFrame
@@ -61,6 +115,7 @@ struct ExperimentResult
     runtime::Float64
 
     function ExperimentResult(
+        total_cost::Float64,
         total_investment_cost::Float64,
         total_operational_cost::Float64,
         investment::DataFrame,
@@ -70,6 +125,7 @@ struct ExperimentResult
         runtime::Float64
     )
         return new(
+            total_cost
             total_investment_cost,
             total_operational_cost,
             investment,
