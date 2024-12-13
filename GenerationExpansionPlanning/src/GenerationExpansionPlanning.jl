@@ -7,6 +7,7 @@ using JuMP
 using Dates
 using TulipaClustering
 using SparseArrays
+using Distances
 
 include("data-structures.jl")
 include("io.jl")

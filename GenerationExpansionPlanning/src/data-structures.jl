@@ -63,51 +63,42 @@ struct SecondStageData
     transmission_lines::Vector{Tuple{Symbol,Symbol}}
     generators::Vector{Tuple{Symbol,Symbol}}
     generation_technologies::Vector{Symbol}
-    periods::Vector{Int}
-    periods_per_scenario::Vector{Tuple{Int,Symbol}}
-
+    
     # Dataframes
     demand::AbstractDataFrame
     generation_availability::AbstractDataFrame
     generation::AbstractDataFrame
     transmission_capacities::AbstractDataFrame
     scenario_probabilities::AbstractDataFrame
-    period_weights::Vector{Float64}
     investment::AbstractDataFrame
 
     # Scalars
     value_of_lost_load::Float64
     relaxation::Bool
     total_investment_cost::Float64
-    time_frame::Int
 
     function SecondStageData(config_dict::Dict{Symbol,Any})
         sets = config_dict[:sets]
         data = config_dict[:data]
         scalars = data[:scalars]
-        rp = config_dict[:rp]
         secondStage = config_dict[:secondStage]
 
         return new(
             secondStage[:time_steps],
             sets[:locations],
-            sets[:scenarios],
+            secondStage[:scenarios],
             sets[:transmission_lines],
             secondStage[:generators],
             secondStage[:generation_technologies],
-            secondStage[:periods],
-            secondStage[:periods_per_scenario],
             secondStage[:demand],
             secondStage[:generation_availability],
             data[:generation],
             data[:transmission_lines],
-            data[:scenario_probabilities],
-            secondStage[:period_weights],
+            secondStage[:scenario_probabilities],
             secondStage[:investment],
             scalars[:value_of_lost_load],
             scalars[:relaxation],
-            secondStage[:total_investment_cost],
-            secondStage[:time_frame]
+            secondStage[:total_investment_cost]
         )
     end
 end

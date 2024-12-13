@@ -236,12 +236,32 @@ function addPeriods!(config::Dict{Symbol,Any}, num_periods::Int)
     config[:input][:secondStage][:generation_availability] = deepcopy(data_config[:generation_availability])
     config[:input][:secondStage][:scenarios] = deepcopy(sets_config[:scenarios])
     config[:input][:secondStage][:time_steps] = deepcopy(sets_config[:time_steps])
-    config[:input][:secondStage][:scenarios] = deepcopy(scenarios)
+    config[:input][:secondStage][:scenario_probabilities] = deepcopy(data_config[:scenario_probabilities])
+
+    if rp_config[:method] == "k_means"
+        method = :k_means
+    elseif rp_config[:method] == "k_medoids"
+        method = :k_medoids
+    elseif rp_config[:method] == "convex_hull"
+        method = :convex_hull
+    else
+        error("Invalid method specified in the configuration.")
+    end
+
+    if rp_config[:distance] == "SqEuclidean"
+        distance = SqEuclidean()
+    elseif rp_config[:distance] == "CosineDist"
+        distance = CosineDist()
+    elseif rp_config[:distance] == "CityBlock"
+        distance = Cityblock()
+    else
+        error("Invalid distance type specified in the configuration.")
+    end
 
     if rp_config[:clustering_type] == "completescenario"
         # Process the data to get correct format for TulipaClustering and cluster
         data, max_demand = process_data(data_config[:demand], data_config[:generation_availability], scenarios, period_duration, timesteps)
-        rp = find_representative_periods(data, num_periods)
+        rp = find_representative_periods(data, num_periods; method = method, distance = distance)
         demand_res, generation_res, weights = process_rp(rp, max_demand, num_periods)
 
         # Add to config
@@ -257,7 +277,7 @@ function addPeriods!(config::Dict{Symbol,Any}, num_periods::Int)
         for (index, scenario) in enumerate(scenarios)
             # Process the data per scenario, representative days get sequenced numbers
             scenario_data, max_demand = process_data(data_config[:demand], data_config[:generation_availability], [scenario], period_duration, timesteps)
-            scenario_rp = find_representative_periods(scenario_data, num_periods)
+            scenario_rp = find_representative_periods(scenario_data, num_periods; method = method, distance = distance)
             scenario_rp.profiles[!, :rep_period] = scenario_rp.profiles[!, :rep_period] .+ (index - 1) * num_periods
 
             # Process results
@@ -304,7 +324,7 @@ function addPeriods!(config::Dict{Symbol,Any}, num_periods::Int)
         # Cluster based on this data and drop the scenario column
         data, max_demand = process_data(demand_temp, generation_temp, scenarios, period_duration, timesteps)
         data = select(data, Not(:scenario)) 
-        rp = find_representative_periods(data, num_periods)
+        rp = find_representative_periods(data, num_periods; method = method, distance = distance)
         demand_res, generation_res, weights = process_rp(rp, max_demand, num_periods)
 
         # Put the sparse matrix in a dataframe for easier indexing
@@ -372,17 +392,7 @@ function process_data(demand_data, availability_data, scenarios, period_duration
 
 end
 
-function edit_config(config::Dict{Symbol,Any}, result::ExperimentResult)
-    data_config = config[:input][:data]
-    sets_config = config[:input][:sets]
-    rp_config = config[:input][:rp]
-    secondStage_config = config[:input][:secondStage]   
-
-    # Set period and its weights to a list with just a 1 and 1
-    secondStage_config[:demand][!, :rep_period] = ones(Int, size(secondStage_config[:demand], 1))
-    secondStage_config[:generation_availability][!, :rep_period] = ones(Int, size(secondStage_config[:generation_availability], 1))
-    secondStage_config[:periods] = [1]
-    secondStage_config[:period_weights] = [1.0]
+function edit_config(config::Dict{Symbol,Any}, result::ExperimentResult)    secondStage_config = config[:input][:secondStage]   
 
     # Set investment field
     secondStage_config[:investment] = result.investment
@@ -390,7 +400,7 @@ function edit_config(config::Dict{Symbol,Any}, result::ExperimentResult)
 
     # Deduce new set NG of location + generation technology
     secondStage_config[:generators] = Tuple.(map(collect, zip(result.investment.location, result.investment.technology)))
-    secondStage_config[:generation_technologies] = unique([g[2] for g ∈ sets_config[:generators]])
+    secondStage_config[:generation_technologies] = unique([g[2] for g ∈ secondStage_config[:generators]])
 
     # Make sure that the values are rounded
     secondStage_config[:demand][!, :demand] = round.(secondStage_config[:demand][!, :demand]; digits = 8)

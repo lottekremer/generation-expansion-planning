@@ -191,6 +191,8 @@ function run_fixed_investment(data::SecondStageData, optimizer_factory)::Tuple{E
     export_capacity = dataframe_to_dict(data.transmission_capacities, [:from, :to], :export_capacity)
     import_capacity = dataframe_to_dict(data.transmission_capacities, [:from, :to], :import_capacity) 
 
+    scenario_probabilities = dataframe_to_dict(data.scenario_probabilities, :scenario, :probability)
+
     input_data = Dict(
         "locations" => N,
         "generation_technologies" => G,
@@ -232,7 +234,7 @@ function run_fixed_investment(data::SecondStageData, optimizer_factory)::Tuple{E
         @info "Adding the cost constraints"
         @constraint(model, 
             total_operational_cost 
-            == sum(operational_cost_per_scenario[s] * scenario_probabilities for s ∈ S))
+            == sum(operational_cost_per_scenario[s] * scenario_probabilities[s] for s ∈ S))
         @constraint(model, [s ∈ S],
             operational_cost_per_scenario[s]
             ==
@@ -266,7 +268,7 @@ function run_fixed_investment(data::SecondStageData, optimizer_factory)::Tuple{E
         ramping = @expression(model, [n ∈ N, g ∈ G, t ∈ T, s ∈ S; t > 1 && (n, g) ∈ NG],
             production[n, g, t, s] - production[n, g, t-1, s]
         )
-        for (n, g, p, t, s) ∈ eachindex(ramping)
+        for (n, g, t, s) ∈ eachindex(ramping)
             # Ramping up
             @constraint(model, ramping[n, g, t, s] ≤ ramping_rate[n, g] * investment_MW[n, g])
             # Ramping down
@@ -278,11 +280,11 @@ function run_fixed_investment(data::SecondStageData, optimizer_factory)::Tuple{E
         optimize!(model)
     end
 
-    production_decisions = jump_variable_to_df(production; dim_names=(:location, :technology, :rep_period, :time_step, :scenario), value_name=:production)
-    line_flow_decisions = jump_variable_to_df(line_flow; dim_names=(:from, :to, :rep_period, :time_step, :scenario), value_name=:flow)
-    loss_of_load_decisions = jump_variable_to_df(loss_of_load; dim_names=(:location, :rep_period, :time_step, :scenario), value_name=:loss_of_load)
+    production_decisions = jump_variable_to_df(production; dim_names=(:location, :technology, :time_step, :scenario), value_name=:production)
+    line_flow_decisions = jump_variable_to_df(line_flow; dim_names=(:from, :to, :time_step, :scenario), value_name=:flow)
+    loss_of_load_decisions = jump_variable_to_df(loss_of_load; dim_names=(:location, :time_step, :scenario), value_name=:loss_of_load)
     total_cost = value.(total_operational_cost)+value.(total_investment_cost)
-    operational_cost_per_scenario = jump_variable_to_df(operational_cost_per_scenario; dim_names=(:scenario), value_name=:operational_cost)
+    operational_cost_per_scenario = jump_variable_to_df(operational_cost_per_scenario; dim_names=(:scenario,), value_name=:operational_cost)
 
     return ExperimentResult(
         total_cost,
