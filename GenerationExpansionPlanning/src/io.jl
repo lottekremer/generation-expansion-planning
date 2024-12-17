@@ -191,11 +191,30 @@ function jump_variable_to_df(variable::AbstractArray{T,N};
 end
 
 
-function save_result(result::ExperimentResult, config::Dict{Symbol,Any})
-    dir = config[:dir]
-    timestamp = Dates.format(Dates.now(), "yyyy-mm-dd_HH-MM-SS")
+function save_result(result::ExperimentResult, config::Dict{Symbol,Any}; fixed_investment::Bool=false)
+    config_output = config[:output]
+    config_rp = config[:input][:rp]
+    use_periods = config_rp[:use_periods]
+    dir = config_output[:dir]
 
-    dir = joinpath(dir, timestamp)
+    if use_periods
+        method = config_rp[:method]
+        distance = config_rp[:distance]
+        clustering_type = config_rp[:clustering_type]
+        num_periods = config_rp[:number_of_periods]
+        name = "method_$(method)_distance_$(distance)_clustering_$(clustering_type)_periods_$(num_periods)"
+    else
+        name = "stochastic"
+    end
+
+    dir = joinpath(dir, name)
+
+    if fixed_investment
+        dir = joinpath(dir, "fixed_investment")
+    else
+        dir = joinpath(dir, "initial_run")
+    end
+
     mkpath(dir)
 
     function save_dataframe(df::AbstractDataFrame, file::String)
@@ -203,11 +222,11 @@ function save_result(result::ExperimentResult, config::Dict{Symbol,Any})
         CSV.write(full_path, df)
     end
 
-    save_dataframe(result.investment, config[:investment])
-    save_dataframe(result.production, config[:production])
-    save_dataframe(result.line_flow, config[:line_flow])
-    save_dataframe(result.loss_of_load, config[:loss_of_load])
-    save_dataframe(result.operational_cost_per_scenario, config[:operational_cost_per_scenario])
+    save_dataframe(result.investment, config_output[:investment])
+    save_dataframe(result.production, config_output[:production])
+    save_dataframe(result.line_flow, config_output[:line_flow])
+    save_dataframe(result.loss_of_load, config_output[:loss_of_load])
+    save_dataframe(result.operational_cost_per_scenario, config_output[:operational_cost_per_scenario])
 
     scalar_data = Dict(
         "total_cost" => result.total_cost,
@@ -215,7 +234,7 @@ function save_result(result::ExperimentResult, config::Dict{Symbol,Any})
         "total_operational_cost" => result.total_operational_cost,
         "runtime" => result.runtime,
     )
-    fname = (dir, config[:scalars]) |> joinpath
+    fname = (dir, config_output[:scalars]) |> joinpath
     open(fname, "w") do io
         TOML.print(io, scalar_data)
     end

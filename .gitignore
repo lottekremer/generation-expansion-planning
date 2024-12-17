@@ -32,3 +32,5 @@ case_studies/scripts/availability_data/*
 case_studies/scripts/demand_data/*
 case_studies/scripts/scenarios_separate/*
 case_studies/stylized_EU/inputs/*
+case_studies/stylized_EU/configs_experiment/output/*
+case_studies/stylized_EU/configs_experiment/configs/*

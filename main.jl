@@ -8,7 +8,7 @@ config_folder = "case_studies/stylized_EU/configs_experiment"
 config_files = readdir(config_folder)
 
 for config_file in config_files
-    if config_file == "test2.toml"
+    if config_file == "stochastic.toml"
         Random.seed!(1234)
         config_path = joinpath(config_folder, config_file)
 
@@ -22,8 +22,7 @@ for config_file in config_files
         experiment_result, input_data = run_experiment(experiment_data, Gurobi.Optimizer)
 
         @info "Saving the results of the initial run"
-        output_config = config[:output]
-        save_result(experiment_result, output_config)
+        save_result(experiment_result, config; fixed_investment = false)
         
         if config[:input][:rp][:use_periods]
             @info "TO DO: Save information about the representative days"
@@ -35,14 +34,7 @@ for config_file in config_files
             @info "Running the fixed investment experiments"	
             result_new, input_data = run_fixed_investment(experiment_new, Gurobi.Optimizer)
 
-            # @info "Saving the input data to JSON file"
-            # input_data_path = joinpath(config_folder, "newtest2.json")
-            # open(input_data_path, "w") do io
-            #     JSON.print(io, input_data)
-            # end
-            
-            output_config = config[:output]
-            save_result(result_new, output_config)
+            save_result(result_new, config; fixed_investment = true)
         end
     end
 
