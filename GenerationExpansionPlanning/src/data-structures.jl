@@ -76,6 +76,8 @@ struct SecondStageData
     value_of_lost_load::Float64
     relaxation::Bool
     total_investment_cost::Float64
+    time_frame::Int
+
 
     function SecondStageData(config_dict::Dict{Symbol,Any})
         sets = config_dict[:sets]
@@ -98,7 +100,8 @@ struct SecondStageData
             secondStage[:investment],
             scalars[:value_of_lost_load],
             scalars[:relaxation],
-            secondStage[:total_investment_cost]
+            secondStage[:total_investment_cost],
+            data[:time_frame]
         )
     end
 end
@@ -113,6 +116,7 @@ struct ExperimentResult
     line_flow::AbstractDataFrame
     loss_of_load::AbstractDataFrame
     runtime::Float64
+    
 
     function ExperimentResult(
         total_cost::Float64,

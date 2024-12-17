@@ -200,7 +200,7 @@ function save_result(result::ExperimentResult, config::Dict{Symbol,Any}; fixed_i
         distance = config_rp[:distance]
         clustering_type = config_rp[:clustering_type]
         num_periods = config_rp[:number_of_periods]
-        name = "method_$(method)_distance_$(distance)_clustering_$(clustering_type)_periods_$(num_periods)"
+        name = "method_$(method)_distance_$(distance)_clustering_$(clustering_type)_periods_$(num_periods)_months_$(config_output[:month])"
     else
         name = "stochastic"
     end
@@ -254,6 +254,7 @@ function addPeriods!(config::Dict{Symbol,Any}, num_periods::Int)
     config[:input][:secondStage][:time_steps] = deepcopy(sets_config[:time_steps])
     config[:input][:secondStage][:scenario_probabilities] = deepcopy(data_config[:scenario_probabilities])
 
+    # Symbol creation (this should be done in an easier way)
     if rp_config[:method] == "k_means"
         method = :k_means
     elseif rp_config[:method] == "k_medoids"
@@ -274,12 +275,17 @@ function addPeriods!(config::Dict{Symbol,Any}, num_periods::Int)
         error("Invalid distance type specified in the configuration.")
     end
 
+    # Find out if blended and adjust
+    if rp_config[:blended] && method != :convex_hull
+        error("Invalid combination blended and $method")
+    end
+
     if rp_config[:clustering_type] == "group_scenario"
         # Process the data to get correct format for TulipaClustering and cluster
         data, max_demand = process_data(data_config[:demand], data_config[:generation_availability], scenarios, period_duration, timesteps)
         num_periods = floor(Int,num_periods / len(scenarios))
         rp = find_representative_periods(data, num_periods; method = method, distance = distance)
-        demand_res, generation_res, weights = process_rp(rp, max_demand, num_periods)
+        demand_res, generation_res, weights = process_rp(rp, max_demand, num_periods; blend = blended)
 
         # Add to config
         rp_config[:periods] = 1:num_periods
@@ -299,7 +305,7 @@ function addPeriods!(config::Dict{Symbol,Any}, num_periods::Int)
             scenario_rp.profiles[!, :rep_period] = scenario_rp.profiles[!, :rep_period] .+ (index - 1) * num_periods
 
             # Process results
-            demand_res, generation_res, weights = process_rp(scenario_rp, max_demand, num_periods)
+            demand_res, generation_res, weights = process_rp(scenario_rp, max_demand, num_periods; blend = blended)
 
             # Concatenate to the total data
             if index == 1
@@ -317,15 +323,15 @@ function addPeriods!(config::Dict{Symbol,Any}, num_periods::Int)
         data_config[:demand] = demand_total
         data_config[:generation_availability] = generation_total
 
-    elseif rp_config[:clustering_type] == "cross_scenario"
+    elseif rp_config[:clustering_type] == "cross_scenario" 
         demand_temp = DataFrame()
         generation_temp = DataFrame()
         for (index, scenario) in enumerate(scenarios)
             # Treat new scenarios as new days 
             demand_data = filter(row -> row.scenario == scenario && row.time_step in timesteps, data_config[:demand])
-            demand_data[!, :time_temp] = demand_data[!, :time_step] .+ (index - 1) * data_config[:time_frame]
+            demand_data[!, :time_temp] = ((demand_data[!, :time_step] .- 1)  .% 720) .+ 1 .+ (index - 1) * data_config[:time_frame]
             generation_data = filter(row -> row.scenario == scenario && row.time_step in timesteps, data_config[:generation_availability])
-            generation_data[!, :time_temp] = generation_data[!, :time_step] .+ (index - 1) * data_config[:time_frame]
+            generation_data[!, :time_temp] = ((generation_data[!, :time_step] .-1) .% 720) .+1 .+ (index - 1) * data_config[:time_frame]
             demand_temp = vcat(demand_temp, demand_data)
             generation_temp = vcat(generation_temp, generation_data)
         end
@@ -427,7 +433,11 @@ function edit_config(config::Dict{Symbol,Any}, result::ExperimentResult)    seco
     return config
 end
 
-function process_rp(rp, max_demand::Float64, num_periods)
+function process_rp(rp, max_demand::Float64, num_periods; blend = false)
+    if blend
+        fit_rep_period_weights!(rp; weight_type = :convex)
+    end
+
     # Split demand and generation data
     split_values = split.(rp.profiles.profile_name, "_")
     rp.profiles[!, :location] = getindex.(split_values, 1)

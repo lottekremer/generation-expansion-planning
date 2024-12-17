@@ -120,7 +120,7 @@ function run_experiment(data::ExperimentData, optimizer_factory)::Tuple{Experime
         )
 
         @info "Adding the ramping constraints"
-        ramping = @expression(model, [n ∈ N, g ∈ G, p ∈ P, t ∈ T, s ∈ S; t > 1 && (n, g) ∈ NG && (p, s) ∈ PS],
+        ramping = @expression(model, [n ∈ N, g ∈ G, p ∈ P, t ∈ T, s ∈ S; t > minimum(T) && (n, g) ∈ NG && (p, s) ∈ PS],
             production[n, g, p, t, s] - production[n, g, p, t-1, s]
         )
         for (n, g, p, t, s) ∈ eachindex(ramping)
@@ -265,7 +265,7 @@ function run_fixed_investment(data::SecondStageData, optimizer_factory)::Tuple{E
         )
 
         @info "Adding the ramping constraints"
-        ramping = @expression(model, [n ∈ N, g ∈ G, t ∈ T, s ∈ S; t > 1 && (n, g) ∈ NG],
+        ramping = @expression(model, [n ∈ N, g ∈ G, t ∈ T, s ∈ S; t > minimum(T) && (n, g) ∈ NG],
             production[n, g, t, s] - production[n, g, t-1, s]
         )
         for (n, g, t, s) ∈ eachindex(ramping)
