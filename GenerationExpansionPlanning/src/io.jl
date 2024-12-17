@@ -69,7 +69,10 @@ function read_config(config_path::AbstractString)::Dict{Symbol,Any}
     read_file!(input_dir, :transmission_lines, :CSV)
     read_file!(input_dir, :scalars, :TOML)
 
-    # change scenario vector of strings to vector of symbols and find weights, if list is not provided then complete list is taken
+    # remove the directory entry as it has been added to the file paths
+    delete!(data_config, :dir)
+
+    # resolve the sets
     if sets_config[:scenarios] == "auto"
         sets_config[:scenarios] = ["1900", "1982", "1987", "1992", "1995", "1997", "2002", "2008", "2009", "2012"]
     end
@@ -81,11 +84,6 @@ function read_config(config_path::AbstractString)::Dict{Symbol,Any}
     else
         read_file!(input_dir, :scenario_probabilities, :CSV)
     end
-
-    # remove the directory entry as it has been added to the file paths
-    delete!(data_config, :dir)
-
-    # resolve the sets
 
     if sets_config[:time_steps] == "auto"
         t_min = min(minimum(data_config[:demand].time_step), minimum(data_config[:generation_availability].time_step))
@@ -247,7 +245,6 @@ function addPeriods!(config::Dict{Symbol,Any}, num_periods::Int)
     scenarios = sets_config[:scenarios]
     period_duration = rp_config[:period_duration]
     timesteps = sets_config[:time_steps]
-    num_periods = rp_config[:number_of_periods]
 
     # Create copies to not lose the old data
     config[:input][:secondStage] = Dict{Symbol, Any}()
@@ -277,9 +274,10 @@ function addPeriods!(config::Dict{Symbol,Any}, num_periods::Int)
         error("Invalid distance type specified in the configuration.")
     end
 
-    if rp_config[:clustering_type] == "completescenario"
+    if rp_config[:clustering_type] == "group_scenario"
         # Process the data to get correct format for TulipaClustering and cluster
         data, max_demand = process_data(data_config[:demand], data_config[:generation_availability], scenarios, period_duration, timesteps)
+        num_periods = floor(Int,num_periods / len(scenarios))
         rp = find_representative_periods(data, num_periods; method = method, distance = distance)
         demand_res, generation_res, weights = process_rp(rp, max_demand, num_periods)
 
@@ -289,7 +287,8 @@ function addPeriods!(config::Dict{Symbol,Any}, num_periods::Int)
         data_config[:demand] = demand_res
         data_config[:generation_availability] = generation_res
     
-    elseif rp_config[:clustering_type] == "perscenario"
+    elseif rp_config[:clustering_type] == "per_scenario"
+        num_periods = floor(Int,num_periods / len(scenarios))
         demand_total = DataFrame()
         generation_total = DataFrame()
         weights_total = []
@@ -318,7 +317,7 @@ function addPeriods!(config::Dict{Symbol,Any}, num_periods::Int)
         data_config[:demand] = demand_total
         data_config[:generation_availability] = generation_total
 
-    elseif rp_config[:clustering_type] == "crosscenario"
+    elseif rp_config[:clustering_type] == "cross_scenario"
         demand_temp = DataFrame()
         generation_temp = DataFrame()
         for (index, scenario) in enumerate(scenarios)
