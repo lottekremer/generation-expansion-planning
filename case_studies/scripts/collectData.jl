@@ -2,17 +2,16 @@ using CSV
 using DataFrames
 using TOML
 
-
 output_folder = "./case_studies/stylized_EU/configs_experiment/output"
 folders = readdir(output_folder)
 
 data = DataFrame(method=String[], distance=String[], num_periods=Int[], clustering=String[], 
-                 avg_total_cost=Float64[], time = Float64[], scenario = Int[], scenario_cost = Float64[])
+                 avg_total_cost=Float64[], time = Float64[], scenario = Int[], month = Int[], scenario_cost = Float64[])
 
 # Loop through each folder to collect the information
 for folder in folders
-    # Skip processing if the method is "stochastic"
-    if folder == "stochastic"
+    # Different process if it is the baseline ("stochastic")
+    if startswith(folder,"stochastic")
         scalars_path = joinpath(output_folder, folder, "initial_run", "scalars.toml")
         scalars = TOML.parsefile(scalars_path)
         total_investment_cost = scalars["total_investment_cost"]
@@ -23,6 +22,8 @@ for folder in folders
         distance = ""
         clustering = "none"
         num_periods = 1
+        folder_parts = split(folder, "_")
+        month = parse(Int,folder_parts[2])
 
         operation_cost_path = joinpath(output_folder, folder, "initial_run", "operational_costs.csv")
         operation_cost_data = CSV.read(operation_cost_path, DataFrame)
@@ -30,7 +31,7 @@ for folder in folders
         for row in eachrow(operation_cost_data)
             scenario = row[:scenario]
             operation_cost = row[:operational_cost] + total_investment_cost
-            push!(data, (method, distance, num_periods, clustering, avg_total_cost, time, scenario, operation_cost))
+            push!(data, (method, distance, num_periods, clustering, avg_total_cost, time, scenario, month, operation_cost))
         end
         continue
     end
@@ -41,6 +42,7 @@ for folder in folders
     distance = folder_parts[5]
     clustering = folder_parts[7]
     num_periods = parse(Int, folder_parts[9])
+    month = parse(Int, folder_parts[11])
 
     # Read scalars.toml from fixed_investment folder
     scalars_path = joinpath(output_folder, folder, "fixed_investment", "scalars.toml")
@@ -67,6 +69,6 @@ for folder in folders
 end
 
 # Save the combined data to a new CSV file
-CSV.write("./case_studies/stylized_EU/configs_experiment/combined_output.csv", data)
+CSV.write("./case_studies/stylized_EU/configs_experiment/combined_output2.csv", data)
 
-println("Table with all information has been created and saved as combined_output.csv")
+println("Table with all information has been created")

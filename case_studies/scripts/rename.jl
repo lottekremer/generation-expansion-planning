@@ -18,25 +18,14 @@ folder = "./case_studies/stylized_EU/configs_experiment/configs"
 files = readdir(folder)
 
 for file in files
-    if endswith(file, ".toml") && file != "stochastic.toml"
-        config = TOML.parsefile(joinpath(folder, file)) |> keys_to_symbols
-        if config[:input][:rp][:clustering_type] == "crosscenario"
-            config[:input][:rp][:clustering_type] = "cross_scenario"
-            open(joinpath(folder, file), "w") do io
-                TOML.print(io, config)
-            end
-        elseif config[:input][:rp][:clustering_type] == "groupscenario"
-            config[:input][:rp][:clustering_type] = "group_scenario"
-            config[:input][:rp][:number_of_periods] = config[:input][:rp][:number_of_periods] * 10
-            open(joinpath(folder, file), "w") do io
-                TOML.print(io, config)
-            end
-        elseif config[:input][:rp][:clustering_type] == "perscenario"
-            config[:input][:rp][:clustering_type] = "per_scenario"
-            config[:input][:rp][:number_of_periods] = config[:input][:rp][:number_of_periods] * 10
-            open(joinpath(folder, file), "w") do io
-                TOML.print(io, config)
-            end
+    if endswith(file, ".toml") && !startswith(file, "stochastic")
+        filepath = joinpath(folder, file)
+        config = TOML.parsefile(filepath)
+        config = keys_to_symbols(config)
+        
+        if config[:input][:rp][:method] == "k_means"
+            # Delete file
+            rm(filepath)
         end
     end
 end
