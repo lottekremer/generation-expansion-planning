@@ -89,6 +89,9 @@ function read_config(config_path::AbstractString)::Dict{Symbol,Any}
         t_min = min(minimum(data_config[:demand].time_step), minimum(data_config[:generation_availability].time_step))
         t_max = max(maximum(data_config[:demand].time_step), maximum(data_config[:generation_availability].time_step))
         sets_config[:time_steps] = t_min:t_max
+    elseif isa(sets_config[:time_steps], String)
+        splitted = split(sets_config[:time_steps], ":")
+        sets_config[:time_steps] = parse(Int, splitted[1]):parse(Int, splitted[2])
     elseif isa(sets_config[:time_steps], Int)
         sets_config[:time_steps] = 1:sets_config[:time_steps]
     end
@@ -208,7 +211,7 @@ function save_result(result::ExperimentResult, config::Dict{Symbol,Any}; fixed_i
     dir = joinpath(dir, name)
 
     if fixed_investment
-        dir = joinpath(dir, "fixed_investment")
+        dir = joinpath(dir, "fixed")
     else
         dir = joinpath(dir, "initial_run")
     end
@@ -262,7 +265,7 @@ function addPeriods!(config::Dict{Symbol,Any}, num_periods::Int)
     elseif rp_config[:method] == "convex_hull"
         method = :convex_hull
     else
-        error("Invalid method specified in the configuration.")
+        method = :convex_hull_with_null
     end
 
     if rp_config[:distance] == "SqEuclidean"
@@ -275,26 +278,23 @@ function addPeriods!(config::Dict{Symbol,Any}, num_periods::Int)
         error("Invalid distance type specified in the configuration.")
     end
 
-    # Find out if blended and adjust
-    if rp_config[:blended] && method != :convex_hull
-        error("Invalid combination blended and $method")
-    end
-
     if rp_config[:clustering_type] == "group_scenario"
         # Process the data to get correct format for TulipaClustering and cluster
         data, max_demand = process_data(data_config[:demand], data_config[:generation_availability], scenarios, period_duration, timesteps)
-        num_periods = floor(Int,num_periods / len(scenarios))
+        num_periods = floor(Int,num_periods / length(scenarios))
+
         rp = find_representative_periods(data, num_periods; method = method, distance = distance)
-        demand_res, generation_res, weights = process_rp(rp, max_demand, num_periods; blend = blended)
+        demand_res, generation_res, weights = process_rp(rp, max_demand, num_periods; blend = rp_config[:blended])
 
         # Add to config
         rp_config[:periods] = 1:num_periods
         rp_config[:period_weights] = weights
+        println("Weights group scenario: ", weights)
         data_config[:demand] = demand_res
         data_config[:generation_availability] = generation_res
     
     elseif rp_config[:clustering_type] == "per_scenario"
-        num_periods = floor(Int,num_periods / len(scenarios))
+        num_periods = floor(Int,num_periods / length(scenarios))
         demand_total = DataFrame()
         generation_total = DataFrame()
         weights_total = []
@@ -305,7 +305,7 @@ function addPeriods!(config::Dict{Symbol,Any}, num_periods::Int)
             scenario_rp.profiles[!, :rep_period] = scenario_rp.profiles[!, :rep_period] .+ (index - 1) * num_periods
 
             # Process results
-            demand_res, generation_res, weights = process_rp(scenario_rp, max_demand, num_periods; blend = blended)
+            demand_res, generation_res, weights = process_rp(scenario_rp, max_demand, num_periods; blend = rp_config[:blended])
 
             # Concatenate to the total data
             if index == 1
@@ -320,6 +320,7 @@ function addPeriods!(config::Dict{Symbol,Any}, num_periods::Int)
         end
         rp_config[:periods] = 1:(num_periods * length(scenarios))
         rp_config[:period_weights] = weights_total
+        println("Weigths per scenario: ", weights_total)
         data_config[:demand] = demand_total
         data_config[:generation_availability] = generation_total
 
@@ -349,7 +350,7 @@ function addPeriods!(config::Dict{Symbol,Any}, num_periods::Int)
         data, max_demand = process_data(demand_temp, generation_temp, scenarios, period_duration, timesteps)
         data = select(data, Not(:scenario)) 
         rp = find_representative_periods(data, num_periods; method = method, distance = distance)
-        demand_res, generation_res, weights = process_rp(rp, max_demand, num_periods)
+        demand_res, generation_res, weights = process_rp(rp, max_demand, num_periods; blend = rp_config[:blended])
 
         # Put the sparse matrix in a dataframe for easier indexing
         row_indices, col_indices, values = findnz(rp.weight_matrix)
@@ -361,8 +362,8 @@ function addPeriods!(config::Dict{Symbol,Any}, num_periods::Int)
         generation_res[!, :scenario] .= "cross"
     
         # Add to config 
-        # TODO: it is now assumed that the weights are the same for each scenario, this should be changed
         rp_config[:periods] = 1:(num_periods)
+        println("Weights cross scenario: ", weights)
         rp_config[:period_weights] = weights
         data_config[:demand] = demand_res
         data_config[:generation_availability] = generation_res
@@ -408,6 +409,9 @@ function process_data(demand_data, availability_data, scenarios, period_duration
 
     # Only select timesteps in time_steps
     combined_data = filter(row -> row.timestep in timesteps, combined_data)
+
+    # Redo timesteps so that they start at 0
+    combined_data.timestep = combined_data.timestep .-  minimum(combined_data.timestep) .+ 1
     
     # Split the data into periods
     split_into_periods!(combined_data; period_duration=period_duration)
@@ -435,9 +439,8 @@ end
 
 function process_rp(rp, max_demand::Float64, num_periods; blend = false)
     if blend
-        fit_rep_period_weights!(rp; weight_type = :convex)
+        fit_rep_period_weights!(rp; weight_type = :convex, tol = 10e-4)
     end
-
     # Split demand and generation data
     split_values = split.(rp.profiles.profile_name, "_")
     rp.profiles[!, :location] = getindex.(split_values, 1)
