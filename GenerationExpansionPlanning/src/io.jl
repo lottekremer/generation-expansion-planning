@@ -205,7 +205,7 @@ function save_result(result::ExperimentResult, config::Dict{Symbol,Any}; fixed_i
         num_periods = config_rp[:number_of_periods]
         name = "method_$(method)_distance_$(distance)_clustering_$(clustering_type)_periods_$(num_periods)_months_$(config_output[:month])"
     else
-        name = "stochastic"
+        name = "stochastic_months_$(config_output[:month])"
     end
 
     dir = joinpath(dir, name)
