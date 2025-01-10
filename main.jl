@@ -4,14 +4,13 @@ using Gurobi
 using JSON
 using Random
 
-config_folder = "case_studies/stylized_EU/configs_experiment"
+config_folder = "case_studies/stylized_EU/configs_experiment/"
 config_files = readdir(config_folder)
 count = 0
 
 for config_file in config_files
-    if endswith(config_file, ".toml") && config_file != "rp103_1.toml"
-        if count == 0
-            Random.seed!(1234)
+    if endswith(config_file, ".toml")
+        if endswith(config_file, "89_12.toml")
             config_path = joinpath(config_folder, config_file)
 
             @info "Reading config file $config_path"
@@ -23,9 +22,9 @@ for config_file in config_files
             @info "Running the experiments defined by $config_path"
             experiment_result, input_data = run_experiment(experiment_data, Gurobi.Optimizer)
 
-            @info "Saving the results of the initial run"
-            save_result(experiment_result, config; fixed_investment = false)
+            continue
         end
+
         Random.seed!(1234)
         config_path = joinpath(config_folder, config_file)
 

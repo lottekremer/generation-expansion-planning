@@ -1,7 +1,7 @@
-export read_config, dataframe_to_dict, jump_variable_to_df, save_result, edit_config
+export read_config, dataframe_to_dict, jump_variable_to_df, save_result, edit_config, process_rp, process_data, addPeriods!
 
 """
-    keys_to_symbols(dict::AbstractDict{String,Any}; recursive::Bool=true)::Dict{Symbol,Any}
+    keys_to_symbols(dict::AbstractDict{String,Any}; recursive::Bool=true)::Dict{Symbol,Anye}
 
 Create a new dictionary that is identical to `dict`, except all of the keys 
 are converted from strings to
@@ -120,7 +120,7 @@ function read_config(config_path::AbstractString)::Dict{Symbol,Any}
 
     # create periods
     if rp_config[:use_periods]
-        addPeriods!(config, rp_config[:number_of_periods])
+        addPeriods!(config)
         sets_config[:time_steps] = 1:rp_config[:period_duration]
     else
         # Set demand and generation availability to have a rep_period of 1
@@ -203,9 +203,9 @@ function save_result(result::ExperimentResult, config::Dict{Symbol,Any}; fixed_i
         distance = config_rp[:distance]
         clustering_type = config_rp[:clustering_type]
         num_periods = config_rp[:number_of_periods]
-        name = "method_$(method)_distance_$(distance)_clustering_$(clustering_type)_periods_$(num_periods)_months_$(config_output[:month])"
+        name = "$(method)_$(distance)_$(clustering_type)_$(num_periods)_$(config_output[:month])"
     else
-        name = "stochastic_months_$(config_output[:month])"
+        name = "stochastic_$(config_output[:month])"
     end
 
     dir = joinpath(dir, name)
@@ -241,13 +241,14 @@ function save_result(result::ExperimentResult, config::Dict{Symbol,Any}; fixed_i
     end
 end
 
-function addPeriods!(config::Dict{Symbol,Any}, num_periods::Int)
+function addPeriods!(config::Dict{Symbol,Any})
     data_config = config[:input][:data]
     sets_config = config[:input][:sets]
     rp_config = config[:input][:rp]
     scenarios = sets_config[:scenarios]
     period_duration = rp_config[:period_duration]
     timesteps = sets_config[:time_steps]
+    num_periods = rp_config[:number_of_periods]
 
     # Create copies to not lose the old data
     config[:input][:secondStage] = Dict{Symbol, Any}()
@@ -284,12 +285,11 @@ function addPeriods!(config::Dict{Symbol,Any}, num_periods::Int)
         num_periods = floor(Int,num_periods / length(scenarios))
 
         rp = find_representative_periods(data, num_periods; method = method, distance = distance)
-        demand_res, generation_res, weights = process_rp(rp, max_demand, num_periods; blend = rp_config[:blended])
+        demand_res, generation_res, weights = process_rp(rp, max_demand, num_periods, rp_config)
 
         # Add to config
         rp_config[:periods] = 1:num_periods
         rp_config[:period_weights] = weights
-        println("Weights group scenario: ", weights)
         data_config[:demand] = demand_res
         data_config[:generation_availability] = generation_res
     
@@ -305,7 +305,7 @@ function addPeriods!(config::Dict{Symbol,Any}, num_periods::Int)
             scenario_rp.profiles[!, :rep_period] = scenario_rp.profiles[!, :rep_period] .+ (index - 1) * num_periods
 
             # Process results
-            demand_res, generation_res, weights = process_rp(scenario_rp, max_demand, num_periods; blend = rp_config[:blended])
+            demand_res, generation_res, weights = process_rp(scenario_rp, max_demand, num_periods, rp_config)
 
             # Concatenate to the total data
             if index == 1
@@ -320,7 +320,6 @@ function addPeriods!(config::Dict{Symbol,Any}, num_periods::Int)
         end
         rp_config[:periods] = 1:(num_periods * length(scenarios))
         rp_config[:period_weights] = weights_total
-        println("Weigths per scenario: ", weights_total)
         data_config[:demand] = demand_total
         data_config[:generation_availability] = generation_total
 
@@ -330,9 +329,9 @@ function addPeriods!(config::Dict{Symbol,Any}, num_periods::Int)
         for (index, scenario) in enumerate(scenarios)
             # Treat new scenarios as new days 
             demand_data = filter(row -> row.scenario == scenario && row.time_step in timesteps, data_config[:demand])
-            demand_data[!, :time_temp] = ((demand_data[!, :time_step] .- 1)  .% 720) .+ 1 .+ (index - 1) * data_config[:time_frame]
+            demand_data[!, :time_temp] = ((demand_data[!, :time_step] .- 1)  .% length(timesteps)) .+ 1 .+ (index - 1) * data_config[:time_frame]
             generation_data = filter(row -> row.scenario == scenario && row.time_step in timesteps, data_config[:generation_availability])
-            generation_data[!, :time_temp] = ((generation_data[!, :time_step] .-1) .% 720) .+1 .+ (index - 1) * data_config[:time_frame]
+            generation_data[!, :time_temp] = ((generation_data[!, :time_step] .-1) .% length(timesteps)) .+1 .+ (index - 1) * data_config[:time_frame]
             demand_temp = vcat(demand_temp, demand_data)
             generation_temp = vcat(generation_temp, generation_data)
         end
@@ -350,7 +349,7 @@ function addPeriods!(config::Dict{Symbol,Any}, num_periods::Int)
         data, max_demand = process_data(demand_temp, generation_temp, scenarios, period_duration, timesteps)
         data = select(data, Not(:scenario)) 
         rp = find_representative_periods(data, num_periods; method = method, distance = distance)
-        demand_res, generation_res, weights = process_rp(rp, max_demand, num_periods; blend = rp_config[:blended])
+        demand_res, generation_res, weights = process_rp(rp, max_demand, num_periods, rp_config)
 
         # Put the sparse matrix in a dataframe for easier indexing
         row_indices, col_indices, values = findnz(rp.weight_matrix)
@@ -363,7 +362,6 @@ function addPeriods!(config::Dict{Symbol,Any}, num_periods::Int)
     
         # Add to config 
         rp_config[:periods] = 1:(num_periods)
-        println("Weights cross scenario: ", weights)
         rp_config[:period_weights] = weights
         data_config[:demand] = demand_res
         data_config[:generation_availability] = generation_res
@@ -404,6 +402,8 @@ function process_data(demand_data, availability_data, scenarios, period_duration
     demand_data.location = string.(demand_data.location, "_demand")
     generation_availability_data.location = string.(generation_availability_data.location, "_", generation_availability_data.technology)
     generation_availability_data = select(generation_availability_data, :location, :timestep, :value, :scenario)
+    demand_data = select(demand_data, :location, :timestep, :value, :scenario)
+
     combined_data = vcat(demand_data, generation_availability_data)
     rename!(combined_data, :location => :profile_name)
 
@@ -415,7 +415,7 @@ function process_data(demand_data, availability_data, scenarios, period_duration
     
     # Split the data into periods
     split_into_periods!(combined_data; period_duration=period_duration)
-
+    
     return combined_data, max_demand
 
 end
@@ -437,10 +437,18 @@ function edit_config(config::Dict{Symbol,Any}, result::ExperimentResult)    seco
     return config
 end
 
-function process_rp(rp, max_demand::Float64, num_periods; blend = false)
-    if blend
-        fit_rep_period_weights!(rp; weight_type = :convex, tol = 10e-4)
+function process_rp(rp, max_demand::Float64, num_periods, config)
+    if config[:blended]
+        lr = config[:learning_rate]
+        iter = config[:max_iter]
+
+        println("\nLearning rate: $lr, Max iterations: $iter")
+        println("Old weights: ", [sum(rp.weight_matrix[:, col]) for col in 1:num_periods])
+        fit_rep_period_weights!(rp; weight_type = :convex, tol = 10e-3, learning_rate = lr, niters = iter, adaptive_grad = false)
+
     end
+    println("Weights: ", [sum(rp.weight_matrix[:, col]) for col in 1:num_periods])
+
     # Split demand and generation data
     split_values = split.(rp.profiles.profile_name, "_")
     rp.profiles[!, :location] = getindex.(split_values, 1)
