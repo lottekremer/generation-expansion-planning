@@ -195,11 +195,18 @@ end
 function save_result(result::ExperimentResult, config::Dict{Symbol,Any}; fixed_investment::Bool=false)
     config_output = config[:output]
     dir = config_output[:dir]
+    blended = config[:input][:rp][:blended]
+
+    if blended
+        addon = "blended"
+    else
+        addon = "non_blended"
+    end
 
     if fixed_investment
-        dir = joinpath(dir, "fixed")
+        dir = joinpath(dir, "$(addon)fixed")
     else
-        dir = joinpath(dir, "initial_run")
+        dir = joinpath(dir, "$(addon)initial_run")
     end
 
     mkpath(dir)
