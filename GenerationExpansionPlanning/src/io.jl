@@ -194,21 +194,7 @@ end
 
 function save_result(result::ExperimentResult, config::Dict{Symbol,Any}; fixed_investment::Bool=false)
     config_output = config[:output]
-    config_rp = config[:input][:rp]
-    use_periods = config_rp[:use_periods]
     dir = config_output[:dir]
-
-    if use_periods
-        method = config_rp[:method]
-        distance = config_rp[:distance]
-        clustering_type = config_rp[:clustering_type]
-        num_periods = config_rp[:number_of_periods]
-        name = "$(method)_$(distance)_$(clustering_type)_$(num_periods)_$(config_output[:month])"
-    else
-        name = "stochastic_$(config_output[:month])"
-    end
-
-    dir = joinpath(dir, name)
 
     if fixed_investment
         dir = joinpath(dir, "fixed")
