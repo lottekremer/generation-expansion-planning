@@ -1,6 +1,9 @@
 using SparseArrays
 using ProgressBars
 using TulipaClustering
+using SparseArrays
+using DataFrames
+
 
 """
   project_onto_simplex(vector)
@@ -292,11 +295,7 @@ function fit_rep_period_weights_2(
   )
 end
 
-# Test the fit_rep_period_weights! function
-using SparseArrays
-using DataFrames
-
-# Create the DataFrame
+# test
 df = DataFrame(
   period = repeat(1:7, inner=2),
   timestep = repeat(1:2, outer=7),
@@ -306,16 +305,3 @@ df = DataFrame(
 res = find_representative_periods(df, 3; method = :convex_hull)
 
 res_fitted = fit_rep_period_weights_2(res; weight_type = :convex, learning_rate = 0.05, niters = 1000, show_progress = false)
-# # Call the function
-# result = fit_rep_period_weights(
-#   weight_matrix,
-#   clustering_matrix,
-#   rp_matrix;
-#   weight_type = :convex,
-#   tol = 1e-3,
-#   show_progress = false
-# )
-
-# # Print the result
-# println("Resulting weight matrix:")
-# println(result)

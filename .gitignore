@@ -34,6 +34,6 @@ case_studies/scripts/scenarios_separate/*
 case_studies/stylized_EU/inputs/*
 case_studies/stylized_EU/res/1_original/*
 case_studies/stylized_EU/res/2_blended/*
-case_studies/stylized_EU/res/3_blended2/*
-case_studies/stylized_EU/res/4_blended3/*
-case_studies/stylized_EU/res/5_blended4/*
+case_studies/stylized_EU/res/3_blended_smallertol/*
+case_studies/stylized_EU/res/4_allmonths/*
+case_studies/stylized_EU/res/5_learningrates/*
