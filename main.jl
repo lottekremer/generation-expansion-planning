@@ -1,14 +1,12 @@
 using GenerationExpansionPlanning
 using TulipaClustering
 using Gurobi
-using Random
 
-config_folder = "case_studies/stylized_EU/configs_experiment/"
+config_folder = "case_studies/stylized_EU/configs/"
 config_files = readdir(config_folder)
 
 for config_file in config_files
     if endswith(config_file, ".toml")
-        Random.seed!(1234)
         config_path = joinpath(config_folder, config_file)
 
         @info "Reading config file $config_path"
@@ -24,13 +22,12 @@ for config_file in config_files
         save_result(experiment_result, config; fixed_investment = false)
         
         if config[:input][:rp][:use_periods]
-            @info "Create new input with investment decisions fixed"
+            @info "Create new model with investment decisions fixed"
             config = edit_config(config, experiment_result)
             experiment_new = SecondStageData(config[:input])
 
             @info "Running the fixed investment experiments"	
             result_new, input_data = run_fixed_investment(experiment_new, Gurobi.Optimizer)
-
             save_result(result_new, config; fixed_investment = true)
         end
     end
