@@ -14,18 +14,19 @@ function keys_to_symbols(
     )
 end
 
-folder = "./case_studies/stylized_EU/configs_experiment/configs"
+folder = "./case_studies/stylized_EU/configs_blended2"
 files = readdir(folder)
 
 for file in files
-    if endswith(file, ".toml") && !startswith(file, "stochastic")
+    if endswith(file, ".toml") 
         filepath = joinpath(folder, file)
         config = TOML.parsefile(filepath)
         config = keys_to_symbols(config)
         
-        if config[:input][:rp][:method] == "k_means"
-            # Delete file
-            rm(filepath)
+        config[:input][:rp][:method] = "convex_hull"
+        
+        open(filepath, "w") do io
+            TOML.print(io, config)
         end
     end
 end

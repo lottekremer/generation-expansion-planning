@@ -2,73 +2,73 @@ using CSV
 using DataFrames
 using TOML
 
-output_folder = "./case_studies/stylized_EU/configs_experiment/output"
+output_folder = "./case_studies/stylized_EU/res/5_learningrates/"
 folders = readdir(output_folder)
 
-data = DataFrame(method=String[], distance=String[], num_periods=Int[], clustering=String[], 
-                 avg_total_cost=Float64[], time = Float64[], scenario = Int[], month = Int[], scenario_cost = Float64[])
+result = DataFrame(method=String[], blended = Bool[], month = Int[], learning_rate = Float64[],
+                 avg_total_cost=Float64[], time = Float64[], time_with_dispatch = Float64[], scenario = Int[], scenario_cost = Float64[])
 
-# Loop through each folder to collect the information
-for folder in folders
-    # Different process if it is the baseline ("stochastic")
-    if startswith(folder,"stochastic")
-        scalars_path = joinpath(output_folder, folder, "initial_run", "scalars.toml")
-        scalars = TOML.parsefile(scalars_path)
-        total_investment_cost = scalars["total_investment_cost"]
-        avg_total_cost = scalars["total_cost"]
-        time = scalars["runtime"]
-
-        method = "stochastic"
-        distance = ""
-        clustering = "none"
-        num_periods = 1
-        folder_parts = split(folder, "_")
-        month = parse(Int,folder_parts[2])
-
-        operation_cost_path = joinpath(output_folder, folder, "initial_run", "operational_costs.csv")
-        operation_cost_data = CSV.read(operation_cost_path, DataFrame)
-    
-        for row in eachrow(operation_cost_data)
-            scenario = row[:scenario]
-            operation_cost = row[:operational_cost] + total_investment_cost
-            push!(data, (method, distance, num_periods, clustering, avg_total_cost, time, scenario, month, operation_cost))
-        end
-        continue
-    end
-
-    # Extract method, distance, clustering, and num_periods from the folder name
+function read_folder(folder, blended, learning_rate, df, dir)
+    print("Reading folder: ", folder, "\n")
+    println("Part of ", dir)
     folder_parts = split(folder, "_")
-    method = folder_parts[2] * "_" * folder_parts[3]
-    distance = folder_parts[5]
-    clustering = folder_parts[7]
-    num_periods = parse(Int, folder_parts[9])
-    month = parse(Int, folder_parts[11])
+    month = parse(Int, folder_parts[7])
+    method = folder_parts[4] * "_" * folder_parts[5]
 
-    # Read scalars.toml from fixed_investment folder
-    scalars_path = joinpath(output_folder, folder, "fixed_investment", "scalars.toml")
+    scalars_path = joinpath(dir, folder, "fixed", "scalars.toml")
     scalars = TOML.parsefile(scalars_path)
     total_investment_cost = scalars["total_investment_cost"]
     avg_total_cost = scalars["total_cost"]
-
-    # Read operation_cost.csv from fixed_investment folder
-    operation_cost_path = joinpath(output_folder, folder, "fixed_investment", "operational_costs.csv")
+    operation_cost_path = joinpath(dir, folder, "fixed", "operational_costs.csv")
     operation_cost_data = CSV.read(operation_cost_path, DataFrame)
 
-    # Read the time from scalars.toml in initial_run folder
-    scalars_path = joinpath(output_folder, folder, "initial_run", "scalars.toml")
-    scalars = TOML.parsefile(scalars_path)
-    time = scalars["runtime"]
+    scalars_path_2 = joinpath(dir, folder, "initial_run", "scalars.toml")
+    scalars_2 = TOML.parsefile(scalars_path_2)
+    time = scalars_2["runtime"]
+    time_with_dispatch = scalars_2["runtime"] + scalars["runtime"]
 
-    # Calculate scenario costs by adding total_investment_cost to each scenario variable cost
     for row in eachrow(operation_cost_data)
         scenario = row[:scenario]
         operation_cost = row[:operational_cost] + total_investment_cost
-        push!(data, (method, distance, num_periods, clustering, avg_total_cost, time, scenario, operation_cost))
+        push!(df, (method, blended, month, learning_rate, avg_total_cost, time, time_with_dispatch, scenario, operation_cost))
     end
+end
 
+# Loop through each folder to collect the information
+for folder in folders
+    # Extract method, distance, clustering, and num_periods from the folder name
+    folder_parts = split(folder, "_")
+    if folder_parts[1] == "nonblended"
+        blended = false
+        lr = 0
+        subfolders = readdir(joinpath(output_folder, folder))
+        for f in subfolders
+            read_folder(f, blended, lr, result, joinpath(output_folder, folder))
+        end
+    elseif folder_parts[2] == "1"
+        blended = true
+        lr = 0.0001
+        subfolders = readdir(joinpath(output_folder, folder))
+        for f in subfolders
+            read_folder(f, blended, lr, result, joinpath(output_folder, folder))
+        end
+    elseif folder_parts[2] == "2"
+        blended = true
+        lr = 0.001
+        subfolders = readdir(joinpath(output_folder, folder))
+        for f in subfolders
+            read_folder(f, blended, lr, result, joinpath(output_folder, folder))
+        end
+    elseif folder_parts[2] == "3"
+        blended = true
+        lr = 0.01
+        subfolders = readdir(joinpath(output_folder, folder))
+        for f in subfolders
+            read_folder(f, blended, lr, result, joinpath(output_folder, folder))
+        end
+    end
 end
 
 # Save the combined data to a new CSV file
-CSV.write("./case_studies/stylized_EU/configs_experiment/combined_output2.csv", data)
-
+CSV.write("./case_studies/stylized_EU/res/results_csv/combined_output_lr.csv", result)
 println("Table with all information has been created")
