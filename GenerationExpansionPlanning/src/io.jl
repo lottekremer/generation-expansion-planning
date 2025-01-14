@@ -33,25 +33,24 @@ function read_config(config_path::AbstractString)::Dict{Symbol,Any}
     current_dir = pwd()  # current working directory
     full_path = (current_dir, config_path) |> joinpath |> abspath  # full path to the config file
 
-    # read config to a dictionary and change keys to symbols
+    # Read config to a dictionary and change keys to symbols
     config = full_path |> TOML.parsefile |> keys_to_symbols
 
-    # aliases for input config dictionaries 
+    # Aliases for input config dictionaries 
     data_config = config[:input][:data]
     sets_config = config[:input][:sets]
     rp_config = config[:input][:rp]
 
-    # find the input directory
+    # Rind the input directory
     config_dir = full_path |> dirname  # directory where the config is located
     input_dir = (config_dir, "..", data_config[:dir]) |> joinpath |> abspath  # input data directory
 
-    # read the dataframes from files
+    # Read the dataframes from files
     function read_file!(path::AbstractString, key::Symbol, format::Symbol)
         if format ≡ :CSV
             data_config[key] = (path, data_config[key]) |> joinpath |> CSV.File |> DataFrame
             # If a scenario is included, make sure that they are seen as strings to be accessed as symbols later 
             if "scenario" in names(data_config[key])
-                data_config[key][!, :scenario] = string.(data_config[key][!, :scenario])
                 data_config[key][!, :scenario] = convert(Vector{String}, data_config[key][!, :scenario])
             end
 
@@ -69,10 +68,10 @@ function read_config(config_path::AbstractString)::Dict{Symbol,Any}
     read_file!(input_dir, :transmission_lines, :CSV)
     read_file!(input_dir, :scalars, :TOML)
 
-    # remove the directory entry as it has been added to the file paths
+    # Remove the directory entry as it has been added to the file paths
     delete!(data_config, :dir)
 
-    # resolve the sets
+    # Scenarios and their probabilities 
     if sets_config[:scenarios] == "auto"
         sets_config[:scenarios] = ["1900", "1982", "1987", "1992", "1995", "1997", "2002", "2008", "2009", "2012"]
     end
@@ -84,7 +83,8 @@ function read_config(config_path::AbstractString)::Dict{Symbol,Any}
     else
         read_file!(input_dir, :scenario_probabilities, :CSV)
     end
-
+    
+    # Time steps (either given as int -> 1:int, as string -> "start:end", or as "auto")
     if sets_config[:time_steps] == "auto"
         t_min = min(minimum(data_config[:demand].time_step), minimum(data_config[:generation_availability].time_step))
         t_max = max(maximum(data_config[:demand].time_step), maximum(data_config[:generation_availability].time_step))
@@ -95,9 +95,11 @@ function read_config(config_path::AbstractString)::Dict{Symbol,Any}
     elseif isa(sets_config[:time_steps], Int)
         sets_config[:time_steps] = 1:sets_config[:time_steps]
     end
-
+    
+    # It is necessary to save the initial length of the timesteps before creating periods
     data_config[:time_frame] = length(sets_config[:time_steps])
 
+    # Locations, generators, generation technologies and transmission lines
     if sets_config[:locations] == "auto"
         sets_config[:locations] =
             data_config[:demand].location ∪
@@ -118,28 +120,19 @@ function read_config(config_path::AbstractString)::Dict{Symbol,Any}
             Tuple.(map(collect, zip(data_config[:transmission_lines].from, data_config[:transmission_lines].to)))
     end
 
-    # create periods
+    # Create periods
     if rp_config[:use_periods]
-        addPeriods!(config)
-        sets_config[:time_steps] = 1:rp_config[:period_duration]
+        addPeriods!(config) # This function creates the representative periods
     else
-        # Set demand and generation availability to have a rep_period of 1
+        # If no representative periods are used, create one large period so that the model can run as normal
         data_config[:demand][!, :rep_period] = ones(Int, size(data_config[:demand], 1))
         data_config[:generation_availability][!, :rep_period] = ones(Int, size(data_config[:generation_availability], 1))
-        
-        # Set period and its weights to a list with just a 1 and 1
         rp_config[:periods] = [1]
         rp_config[:period_weights] = [1.0]
-
-        # Set periods_per_scenario to be a list of tuples with just a 1 and all scenarios
         rp_config[:periods_per_scenario] = [(1, scenario) for scenario in sets_config[:scenarios]]
     end
 
     config[:output][:dir] = (config_dir, config[:output][:dir]) |> joinpath |> abspath
-
-    # make sure that the values are rounded
-    data_config[:demand][!, :demand] = round.(data_config[:demand][!, :demand]; digits = 8)
-    data_config[:generation_availability][!, :availability] = round.(data_config[:generation_availability][!, :availability]; digits = 8)
 
     return config
 end
@@ -191,7 +184,6 @@ function jump_variable_to_df(variable::AbstractArray{T,N};
     return df
 end
 
-
 function save_result(result::ExperimentResult, config::Dict{Symbol,Any}; fixed_investment::Bool=false)
     config_output = config[:output]
     dir = config_output[:dir]
@@ -235,6 +227,7 @@ function save_result(result::ExperimentResult, config::Dict{Symbol,Any}; fixed_i
 end
 
 function addPeriods!(config::Dict{Symbol,Any})
+    # Extract the necessary data from the config
     data_config = config[:input][:data]
     sets_config = config[:input][:sets]
     rp_config = config[:input][:rp]
@@ -251,7 +244,7 @@ function addPeriods!(config::Dict{Symbol,Any})
     config[:input][:secondStage][:time_steps] = deepcopy(sets_config[:time_steps])
     config[:input][:secondStage][:scenario_probabilities] = deepcopy(data_config[:scenario_probabilities])
 
-    # Symbol creation (this should be done in an easier way)
+    # Method and distance extraction
     if rp_config[:method] == "k_means"
         method = :k_means
     elseif rp_config[:method] == "k_medoids"
@@ -259,7 +252,7 @@ function addPeriods!(config::Dict{Symbol,Any})
     elseif rp_config[:method] == "convex_hull"
         method = :convex_hull
     else
-        method = :convex_hull_with_null
+        error("Invalid method specified in the config.")
     end
 
     if rp_config[:distance] == "SqEuclidean"
@@ -269,35 +262,42 @@ function addPeriods!(config::Dict{Symbol,Any})
     elseif rp_config[:distance] == "CityBlock"
         distance = Cityblock()
     else
-        error("Invalid distance type specified in the configuration.")
+        error("Invalid distance type specified in the config.")
     end
 
+    # Per clustering type, different actions are taken
+
     if rp_config[:clustering_type] == "group_scenario"
-        # Process the data to get correct format for TulipaClustering and cluster
+
+        # Demand and generation availability get concatenated, demand is scaled, timesteps are divided into periods
         data, max_demand = process_data(data_config[:demand], data_config[:generation_availability], scenarios, period_duration, timesteps)
+
+        # For each day, all scenarios are concatenated, so the number of periods is divided by the number of scenarios to make it comparable to the other methods
         num_periods = floor(Int,num_periods / length(scenarios))
 
+        # Find representative periods and process the results
         rp = find_representative_periods(data, num_periods; method = method, distance = distance)
         demand_res, generation_res, weights = process_rp(rp, max_demand, num_periods, rp_config)
-
-        # Add to config
         rp_config[:periods] = 1:num_periods
         rp_config[:period_weights] = weights
         data_config[:demand] = demand_res
         data_config[:generation_availability] = generation_res
     
     elseif rp_config[:clustering_type] == "per_scenario"
+
+        # Number of periods per scenario is found by dividing the number of periods by the number of scenarios
         num_periods = floor(Int,num_periods / length(scenarios))
         demand_total = DataFrame()
         generation_total = DataFrame()
         weights_total = []
+
+        # Each scenario is processed separately, and the resulting representative days are concatenated
         for (index, scenario) in enumerate(scenarios)
-            # Process the data per scenario, representative days get sequenced numbers
+
+            # Process the data per scenario, find representative days and number them sequentially
             scenario_data, max_demand = process_data(data_config[:demand], data_config[:generation_availability], [scenario], period_duration, timesteps)
             scenario_rp = find_representative_periods(scenario_data, num_periods; method = method, distance = distance)
             scenario_rp.profiles[!, :rep_period] = scenario_rp.profiles[!, :rep_period] .+ (index - 1) * num_periods
-
-            # Process results
             demand_res, generation_res, weights = process_rp(scenario_rp, max_demand, num_periods, rp_config)
 
             # Concatenate to the total data
@@ -311,16 +311,19 @@ function addPeriods!(config::Dict{Symbol,Any})
                 weights_total = vcat(weights_total, weights)    
             end
         end
+
         rp_config[:periods] = 1:(num_periods * length(scenarios))
         rp_config[:period_weights] = weights_total
         data_config[:demand] = demand_total
         data_config[:generation_availability] = generation_total
 
     elseif rp_config[:clustering_type] == "cross_scenario" 
+
+        # To create a cross scenario clustering, each scenario is treated as a new set of days, so all data is concatenated and the time_step is adjusted
         demand_temp = DataFrame()
         generation_temp = DataFrame()
+
         for (index, scenario) in enumerate(scenarios)
-            # Treat new scenarios as new days 
             demand_data = filter(row -> row.scenario == scenario && row.time_step in timesteps, data_config[:demand])
             demand_data[!, :time_temp] = ((demand_data[!, :time_step] .- 1)  .% length(timesteps)) .+ 1 .+ (index - 1) * data_config[:time_frame]
             generation_data = filter(row -> row.scenario == scenario && row.time_step in timesteps, data_config[:generation_availability])
@@ -338,18 +341,13 @@ function addPeriods!(config::Dict{Symbol,Any})
         timesteps = 1:maximum(demand_temp.time_step)
         scenario_time[!, :period] = Int.(floor.((scenario_time.time_temp .- 1) ./ period_duration) .+ 1)
 
-        # Cluster based on this data and drop the scenario column
+        # Cluster based on this data and drop the scenario column as it is not needed
         data, max_demand = process_data(demand_temp, generation_temp, scenarios, period_duration, timesteps)
         data = select(data, Not(:scenario)) 
         rp = find_representative_periods(data, num_periods; method = method, distance = distance)
         demand_res, generation_res, weights = process_rp(rp, max_demand, num_periods, rp_config)
 
-        # Put the sparse matrix in a dataframe for easier indexing
-        row_indices, col_indices, values = findnz(rp.weight_matrix)
-        weight_df = DataFrame(period = row_indices, rep_period = col_indices, weight = values)
-        weight_df[!, :scenario] = scenarios[Int.(ceil.(weight_df.period ./ num_periods)).% length(scenarios) .+ 1]
-
-        # Add scenario column with "cross" to the demand and generation data and save secondStage_config[:scenarios] = scenarios
+        # Add scenario column with "cross" to the demand and generation data as actual scenario is not needed in model
         demand_res[!, :scenario] .= "cross"
         generation_res[!, :scenario] .= "cross"
     
@@ -359,19 +357,22 @@ function addPeriods!(config::Dict{Symbol,Any})
         data_config[:demand] = demand_res
         data_config[:generation_availability] = generation_res
         sets_config[:scenarios] = Symbol.(["cross"])
+
+        # To get correct scaling in the objective, the probabilities of scenario is kept at 1/length(original scenarios)
         data_config[:scenario_probabilities] = DataFrame(scenario = Symbol.(["cross"]), probability = [1/length(scenarios)])
     else
         error("Invalid clustering type specified in the configuration.")
     end
 
+    # Make sure that columns are still symbols
     string_columns_demand = findall(col -> eltype(col) <: AbstractString, eachcol(data_config[:demand]))
     data_config[:demand][!, string_columns_demand] = Symbol.(data_config[:demand][!, string_columns_demand])
-
     string_columns_generation = findall(col -> eltype(col) <: AbstractString, eachcol(data_config[:generation_availability]))
     data_config[:generation_availability][!, string_columns_generation] = Symbol.(data_config[:generation_availability][!, string_columns_generation])
 
-    # Set periods_per_scenario to be a list of unique tuples with all combinations of rep_period and scenario in demand
+    # Set periods_per_scenario to be a list of unique tuples with all combinations of rep_period and scenario in demand and correct the time_steps to be the periods length
     rp_config[:periods_per_scenario] = unique(Tuple.(map(collect, zip(data_config[:demand].rep_period, data_config[:demand].scenario))))
+    sets_config[:time_steps] = 1:rp_config[:period_duration]
 
 end
 
@@ -396,24 +397,21 @@ function process_data(demand_data, availability_data, scenarios, period_duration
     generation_availability_data.location = string.(generation_availability_data.location, "_", generation_availability_data.technology)
     generation_availability_data = select(generation_availability_data, :location, :timestep, :value, :scenario)
     demand_data = select(demand_data, :location, :timestep, :value, :scenario)
-
     combined_data = vcat(demand_data, generation_availability_data)
     rename!(combined_data, :location => :profile_name)
 
-    # Only select timesteps in time_steps
+    # Only select timesteps in time_steps and adjust the timesteps to start at 1
     combined_data = filter(row -> row.timestep in timesteps, combined_data)
-
-    # Redo timesteps so that they start at 0
     combined_data.timestep = combined_data.timestep .-  minimum(combined_data.timestep) .+ 1
     
-    # Split the data into periods
+    # Split the data into periods using function from TulipaClustering
     split_into_periods!(combined_data; period_duration=period_duration)
     
     return combined_data, max_demand
-
 end
 
-function edit_config(config::Dict{Symbol,Any}, result::ExperimentResult)    secondStage_config = config[:input][:secondStage]   
+function edit_config(config::Dict{Symbol,Any}, result::ExperimentResult)
+    secondStage_config = config[:input][:secondStage]   
 
     # Set investment field
     secondStage_config[:investment] = result.investment
@@ -423,14 +421,12 @@ function edit_config(config::Dict{Symbol,Any}, result::ExperimentResult)    seco
     secondStage_config[:generators] = Tuple.(map(collect, zip(result.investment.location, result.investment.technology)))
     secondStage_config[:generation_technologies] = unique([g[2] for g ∈ secondStage_config[:generators]])
 
-    # Make sure that the values are rounded
-    secondStage_config[:demand][!, :demand] = round.(secondStage_config[:demand][!, :demand]; digits = 8)
-    secondStage_config[:generation_availability][!, :availability] = round.(secondStage_config[:generation_availability][!, :availability]; digits = 8)
-
     return config
 end
 
 function process_rp(rp, max_demand::Float64, num_periods, config)
+
+    # If blended, print the old weights and then fit the new weights, to check whether fitting works
     if config[:blended]
         lr = config[:learning_rate]
         iter = config[:max_iter]
@@ -438,9 +434,8 @@ function process_rp(rp, max_demand::Float64, num_periods, config)
         println("\nLearning rate: $lr, Max iterations: $iter")
         println("Old weights: ", [sum(rp.weight_matrix[:, col]) for col in 1:num_periods])
         fit_rep_period_weights!(rp; weight_type = :convex, tol = 10e-3, learning_rate = lr, niters = iter, adaptive_grad = false)
-
+        println("Weights: ", [sum(rp.weight_matrix[:, col]) for col in 1:num_periods])
     end
-    println("Weights: ", [sum(rp.weight_matrix[:, col]) for col in 1:num_periods])
 
     # Split demand and generation data
     split_values = split.(rp.profiles.profile_name, "_")

@@ -11,47 +11,27 @@ function run_experiment(data::ExperimentData, optimizer_factory)::Tuple{Experime
     S = data.scenarios
     P = data.periods
     PS = data.periods_per_scenario
-    
-    @info "Converting dataframes to dictionaries"
+
+    # Filter to select correct scenarios and time steps
     filter!(row -> row.time_step ∈ T, data.demand)
     filter!(row -> row.scenario ∈ S, data.demand)
     filter!(row -> row.time_step ∈ T, data.generation_availability)
     filter!(row -> row.scenario ∈ S, data.generation_availability)
+    
+    @info "Converting dataframes to dictionaries"
     demand = dataframe_to_dict(data.demand, [:location, :rep_period, :time_step, :scenario], :demand)
     generation_availability = dataframe_to_dict(data.generation_availability, [:location, :technology, :rep_period, :time_step, :scenario], :availability)
     investment_cost = dataframe_to_dict(data.generation, [:location, :technology], :investment_cost)
-
     variable_cost = dataframe_to_dict(data.generation, [:location, :technology], :variable_cost)
     unit_capacity = dataframe_to_dict(data.generation, [:location, :technology], :unit_capacity)
     ramping_rate = dataframe_to_dict(data.generation, [:location, :technology], :ramping_rate)
     export_capacity = dataframe_to_dict(data.transmission_capacities, [:from, :to], :export_capacity)
     import_capacity = dataframe_to_dict(data.transmission_capacities, [:from, :to], :import_capacity)
-
     scenario_probabilities = dataframe_to_dict(data.scenario_probabilities, :scenario, :probability)
+
     period_weights = data.period_weights   
     tf = data.time_frame 
     
-    input_data = Dict(
-        "locations" => N,
-        "generation_technologies" => G,
-        "generators" => NG,
-        "time_steps" => T,
-        "transmission_lines" => L,
-        "scenarios" => S,
-        "periods" => P,
-        "periods_per_scenario" => PS,
-        "demand" => demand,
-        "generation_availability" => generation_availability,
-        "investment_cost" => investment_cost,
-        "variable_cost" => variable_cost,
-        "unit_capacity" => unit_capacity,
-        "ramping_rate" => ramping_rate,
-        "export_capacity" => export_capacity,
-        "import_capacity" => import_capacity,
-        "scenario_probabilities" => scenario_probabilities,
-        "period_weights" => period_weights
-    )
-
     @info "Solving the problem"
     dt = @elapsed begin
         # 2. Add variables to the model
@@ -79,13 +59,18 @@ function run_experiment(data::ExperimentData, optimizer_factory)::Tuple{Experime
 
         # 4. Add constraints to the model
         @info "Adding the constraints"
+
         @info "Adding the cost constraints"
         @constraint(model, total_investment_cost == sum(investment_cost[n, g] * investment_MW[n, g] for (n, g) ∈ NG))
+
+        # Operational costs are weighted by scenario probability
         @constraint(model, 
             total_operational_cost 
             == 
             sum(operational_cost_per_scenario[s] * scenario_probabilities[s] for s ∈ S)
-        )
+        ) 
+
+        # Operation costs get weighted by 8760 / tf to compare to them yearly costs of investments
         @constraint(model, [s ∈ S],
             operational_cost_per_scenario[s]
             ==
@@ -160,7 +145,7 @@ function run_experiment(data::ExperimentData, optimizer_factory)::Tuple{Experime
         line_flow_decisions,
         loss_of_load_decisions,
         dt
-    ), input_data
+    )
 end
 
 function run_fixed_investment(data::SecondStageData, optimizer_factory)::Tuple{ExperimentResult, Dict{String, Any}}
@@ -173,18 +158,19 @@ function run_fixed_investment(data::SecondStageData, optimizer_factory)::Tuple{E
     L = data.transmission_lines
     S = data.scenarios
 
-    @info "Converting dataframes to dictionaries"
+    # Filter to select correct scenarios and time steps
+
     filter!(row -> row.time_step ∈ T, data.demand)
     filter!(row -> row.scenario ∈ S, data.demand)
     filter!(row -> row.time_step ∈ T, data.generation_availability)
     filter!(row -> row.scenario ∈ S, data.generation_availability)
+
+    @info "Converting dataframes to dictionaries"
     demand = dataframe_to_dict(data.demand, [:location, :time_step, :scenario], :demand)
     generation_availability = dataframe_to_dict(data.generation_availability, [:location, :technology, :time_step, :scenario], :availability)
-    
     total_investment_cost = data.total_investment_cost
     investment_MW = dataframe_to_dict(data.investment, [:location, :technology], :capacity)
     investment = dataframe_to_dict(data.investment, [:location, :technology], :units)
-
     variable_cost = dataframe_to_dict(data.generation, [:location, :technology], :variable_cost)
     unit_capacity = dataframe_to_dict(data.generation, [:location, :technology], :unit_capacity)
     ramping_rate = dataframe_to_dict(data.generation, [:location, :technology], :ramping_rate)
@@ -192,22 +178,6 @@ function run_fixed_investment(data::SecondStageData, optimizer_factory)::Tuple{E
     import_capacity = dataframe_to_dict(data.transmission_capacities, [:from, :to], :import_capacity) 
 
     scenario_probabilities = dataframe_to_dict(data.scenario_probabilities, :scenario, :probability)
-
-    input_data = Dict(
-        "locations" => N,
-        "generation_technologies" => G,
-        "generators" => NG,
-        "time_steps" => T,
-        "transmission_lines" => L,
-        "scenarios" => S,
-        "demand" => demand,
-        "generation_availability" => generation_availability,
-        "variable_cost" => variable_cost,
-        "unit_capacity" => unit_capacity,
-        "ramping_rate" => ramping_rate,
-        "export_capacity" => export_capacity,
-        "import_capacity" => import_capacity
-    )
 
     @info "Solving the problem"
     dt = @elapsed begin
@@ -232,6 +202,8 @@ function run_fixed_investment(data::SecondStageData, optimizer_factory)::Tuple{E
         # 4. Add constraints to the model
         @info "Adding the constraints"
         @info "Adding the cost constraints"
+
+        # Operational costs are weighted by scenario probability and 8760 / tf
         @constraint(model, 
             total_operational_cost 
             == sum(operational_cost_per_scenario[s] * scenario_probabilities[s] for s ∈ S))
@@ -296,5 +268,5 @@ function run_fixed_investment(data::SecondStageData, optimizer_factory)::Tuple{E
         line_flow_decisions,
         loss_of_load_decisions,
         dt
-    ), input_data
+    )
 end
