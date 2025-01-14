@@ -1,6 +1,6 @@
 export run_experiment, run_fixed_investment
 
-function run_experiment(data::ExperimentData, optimizer_factory)::Tuple{ExperimentResult, Dict{String, Any}}
+function run_experiment(data::ExperimentData, optimizer_factory)::ExperimentResult
     # 1. Extract data into local variables
     @info "Reading the sets"
     N = data.locations
@@ -148,7 +148,7 @@ function run_experiment(data::ExperimentData, optimizer_factory)::Tuple{Experime
     )
 end
 
-function run_fixed_investment(data::SecondStageData, optimizer_factory)::Tuple{ExperimentResult, Dict{String, Any}}
+function run_fixed_investment(data::SecondStageData, optimizer_factory)::ExperimentResult
     # 1. Extract data into local variables
     @info "Reading the sets"
     N = data.locations

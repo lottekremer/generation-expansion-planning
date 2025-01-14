@@ -51,6 +51,7 @@ function read_config(config_path::AbstractString)::Dict{Symbol,Any}
             data_config[key] = (path, data_config[key]) |> joinpath |> CSV.File |> DataFrame
             # If a scenario is included, make sure that they are seen as strings to be accessed as symbols later 
             if "scenario" in names(data_config[key])
+                data_config[key][!, :scenario] = string.(data_config[key][!, :scenario])
                 data_config[key][!, :scenario] = convert(Vector{String}, data_config[key][!, :scenario])
             end
 
@@ -196,9 +197,9 @@ function save_result(result::ExperimentResult, config::Dict{Symbol,Any}; fixed_i
     end
 
     if fixed_investment
-        dir = joinpath(dir, "$(addon)fixed")
+        dir = joinpath(dir*"_$(addon)", "fixed")
     else
-        dir = joinpath(dir, "$(addon)initial_run")
+        dir = joinpath(dir*"_$(addon)", "initial_run")
     end
 
     mkpath(dir)
