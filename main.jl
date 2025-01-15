@@ -2,7 +2,7 @@ using GenerationExpansionPlanning
 using TulipaClustering
 using Gurobi
 
-config_folder = "case_studies/stylized_EU/configs/"
+config_folder = "case_studies/feasibilityExperiments/configs/"
 config_files = readdir(config_folder)
 
 for config_file in config_files

@@ -1,0 +1,7 @@
+location,time_step,demand,scenario
+GER,1,1000,1
+GER,1,1000,2
+GER,1,1000,3
+GER,1,1000,4
+GER,1,1000,5
+GER,1,1000,6

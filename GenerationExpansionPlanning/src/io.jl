@@ -170,7 +170,7 @@ by a Symbol `value_name` (e.g., `:Value`) and a DataType `value_type`.
 function jump_variable_to_df(variable::AbstractArray{T,N};
     dim_names::NTuple{N,Symbol},
     value_name::Symbol=:value,
-    value_type::DataType=Float64) where {T<:Union{VariableRef,AffExpr},N}
+    value_type::DataType=Float64) where {T<:Union{VariableRef,AffExpr, Any},N}
 
     if isempty(variable)
         return DataFrame()
@@ -425,17 +425,21 @@ function edit_config(config::Dict{Symbol,Any}, result::ExperimentResult)
     return config
 end
 
-function process_rp(rp, max_demand::Float64, num_periods, config)
+function process_rp(rp, max_demand, num_periods, config)
+
+    println("rp.profiles: ", rp.profiles)
 
     # If blended, print the old weights and then fit the new weights, to check whether fitting works
     if config[:blended]
         lr = config[:learning_rate]
         iter = config[:max_iter]
-
+        tolerance = config[:tol]
+        println("Weights matrix", rp.weight_matrix)
         println("\nLearning rate: $lr, Max iterations: $iter")
         println("Old weights: ", [sum(rp.weight_matrix[:, col]) for col in 1:num_periods])
-        fit_rep_period_weights!(rp; weight_type = :convex, tol = 10e-3, learning_rate = lr, niters = iter, adaptive_grad = false)
+        fit_rep_period_weights!(rp; weight_type = :convex, tol = tolerance, learning_rate = lr, niters = iter, adaptive_grad = false)
         println("Weights: ", [sum(rp.weight_matrix[:, col]) for col in 1:num_periods])
+        println("Weights matrix", rp.weight_matrix)
     end
 
     # Split demand and generation data
