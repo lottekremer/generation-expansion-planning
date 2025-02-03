@@ -74,7 +74,7 @@ function read_config(config_path::AbstractString)::Dict{Symbol,Any}
 
     # Scenarios and their probabilities 
     if sets_config[:scenarios] == "auto"
-        sets_config[:scenarios] = ["1900", "1982", "1987", "1992", "1995", "1997", "2002", "2008", "2009", "2012"]
+        data_config[:demand].scenario ∪ data_config[:generation_availability].scenario
     end
     sets_config[:scenarios] = Symbol.(sets_config[:scenarios])
 
@@ -426,7 +426,6 @@ function edit_config(config::Dict{Symbol,Any}, result::ExperimentResult)
 end
 
 function process_rp(rp, max_demand, num_periods, config)
-
 
     # If blended, print the old weights and then fit the new weights, to check whether fitting works
     if config[:blended]
