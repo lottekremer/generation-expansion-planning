@@ -130,9 +130,6 @@ function run_experiment(data::ExperimentData, optimizer_factory)::ExperimentResu
     investment_decisions_MW = jump_variable_to_df(investment_MW; dim_names=(:location, :technology), value_name=:capacity)
     investment_decisions = leftjoin(investment_decisions_MW, investment_decisions_units, on=[:location, :technology])
     
-    println("Line flow", line_flow)
-    println("Production decisions", production)
-    println("Type of production decisions", typeof(production))
     production_decisions = jump_variable_to_df(production; dim_names=(:location, :technology, :rep_period, :time_step, :scenario), value_name=:production)
     line_flow_decisions = jump_variable_to_df(line_flow; dim_names=(:from, :to, :rep_period, :time_step, :scenario), value_name=:flow)
     loss_of_load_decisions = jump_variable_to_df(loss_of_load; dim_names=(:location, :rep_period, :time_step, :scenario), value_name=:loss_of_load)

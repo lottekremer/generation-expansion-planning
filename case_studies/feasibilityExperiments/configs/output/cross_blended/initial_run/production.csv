@@ -1,5 +1,0 @@
-location,technology,rep_period,time_step,scenario,production
-GER,SunPV,1,1,cross,1000.0
-GER,SunPV,2,1,cross,1000.0
-GER,SunPV,3,1,cross,250.0
-GER,WindOn,3,1,cross,750.0

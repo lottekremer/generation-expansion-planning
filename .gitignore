@@ -43,3 +43,6 @@ case_studies/stylized_EU/small_tests/test_blended_worse_2/*
 case_studies/stylized_EU/small_tests/test_wholeyear_30rp/*
 case_studies/stylized_EU/small_tests/test_wholeyear_100rp/*
 case_studies/stylized_EU/configs/output/*
+case_studies/feasibilityExperiment_1/*
+case_studies/feasibilityExperiment_2/*
+case_studies/feasibilityExperiment_3/*
