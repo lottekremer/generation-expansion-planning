@@ -99,6 +99,7 @@ function read_config(config_path::AbstractString)::Dict{Symbol,Any}
     
     # It is necessary to save the initial length of the timesteps before creating periods
     data_config[:time_frame] = length(sets_config[:time_steps])
+    rp_config[:total_periods]  = Int(data_config[:time_frame] / rp_config[:period_duration])
 
     # Locations, generators, generation technologies and transmission lines
     if sets_config[:locations] == "auto"
@@ -282,7 +283,7 @@ function addPeriods!(config::Dict{Symbol,Any})
 
         # Find representative periods and process the results
         rp = find_representative_periods(data, num_periods; method = method, distance = distance)
-        demand_res, generation_res, weights = process_rp(rp, max_demand, num_periods, rp_config)
+        demand_res, generation_res, weights = process_rp(rp, max_demand, num_periods, config)
         rp_config[:periods] = 1:num_periods
         rp_config[:period_weights] = weights
         data_config[:demand] = demand_res
@@ -303,7 +304,7 @@ function addPeriods!(config::Dict{Symbol,Any})
             scenario_data, max_demand = process_data(data_config[:demand], data_config[:generation_availability], [scenario], period_duration, timesteps)
             scenario_rp = find_representative_periods(scenario_data, num_periods; method = method, distance = distance)
             scenario_rp.profiles[!, :rep_period] = scenario_rp.profiles[!, :rep_period] .+ (index - 1) * num_periods
-            demand_res, generation_res, weights = process_rp(scenario_rp, max_demand, num_periods, rp_config)
+            demand_res, generation_res, weights = process_rp(scenario_rp, max_demand, num_periods, config)
 
             # Concatenate to the total data
             if index == 1
@@ -350,7 +351,7 @@ function addPeriods!(config::Dict{Symbol,Any})
         data, max_demand = process_data(demand_temp, generation_temp, scenarios, period_duration, timesteps)
         data = select(data, Not(:scenario)) 
         rp = find_representative_periods(data, num_periods; method = method, distance = distance)
-        demand_res, generation_res, weights = process_rp(rp, max_demand, num_periods, rp_config)
+        demand_res, generation_res, weights = process_rp(rp, max_demand, num_periods, config)
 
         # Add scenario column with "cross" to the demand and generation data as actual scenario is not needed in model
         demand_res[!, :scenario] .= "cross"
@@ -363,8 +364,8 @@ function addPeriods!(config::Dict{Symbol,Any})
         data_config[:generation_availability] = generation_res
         sets_config[:scenarios] = Symbol.(["cross"])
 
-        # To get correct scaling in the objective, the probabilities of scenario is kept at 1/length(original scenarios)
-        data_config[:scenario_probabilities] = DataFrame(scenario = Symbol.(["cross"]), probability = [1/length(scenarios)])
+        # To get correct scaling in the objective, the probabilities of scenario is set to 1
+        data_config[:scenario_probabilities] = DataFrame(scenario = Symbol.(["cross"]), probability = [1.0])
     else
         error("Invalid clustering type specified in the configuration.")
     end
@@ -429,7 +430,8 @@ function edit_config(config::Dict{Symbol,Any}, result::ExperimentResult)
     return config
 end
 
-function process_rp(rp, max_demand, num_periods, config)
+function process_rp(rp, max_demand, num_periods, config_total)
+    config = config_total[:input][:rp]
 
     # If blended, print the old weights and then fit the new weights, to check whether fitting works
     if config[:blended]
@@ -466,11 +468,29 @@ function process_rp(rp, max_demand, num_periods, config)
     rename!(generation_res, :timestep => :time_step)
 
     # Add period weights
-    weights = [sum(rp.weight_matrix[:, col]) for col in 1:num_periods]
+    if config[:clustering] == "cross_scenario"
+        start = 1
+        finish = config[:total_periods]
+        unique_scenarios = unique(demand_res[!, :scenario])
+        scenario_prob = config_total[:input][:data][:scenario_probabilities]
 
-    # If weigths are not convex, normalize them
-    total_weights = sum(weights)
-    weights = weights ./ (total_weights / config[:period_duration])
+        for scenario in unique_scenarios
+            rp.weight_matrix[start:finish, :] *= scenario_prob[scenario]
+            start += config[:total_periods]
+            finish += config[:total_periods]
+        end
+
+        weights = [sum(rp.weight_matrix[:, col]) for col in 1:num_periods]
+        total_weights = sum(weights)
+        weights = weights ./ (total_weights / config[:total_periods])
+        
+    else
+        weights = [sum(rp.weight_matrix[:, col]) for col in 1:num_periods]
+
+        # If weigths are not convex, normalize them
+        total_weights = sum(weights)
+        weights = weights ./ (total_weights / config[:total_periods])
+    end
 
     return demand_res, generation_res, weights
 end
