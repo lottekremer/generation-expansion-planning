@@ -468,5 +468,9 @@ function process_rp(rp, max_demand, num_periods, config)
     # Add period weights
     weights = [sum(rp.weight_matrix[:, col]) for col in 1:num_periods]
 
+    # If weigths are not convex, normalize them
+    total_weights = sum(weights)
+    weights = weights ./ (total_weights / config[:period_duration])
+
     return demand_res, generation_res, weights
 end
