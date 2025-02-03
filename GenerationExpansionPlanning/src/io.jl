@@ -427,19 +427,15 @@ end
 
 function process_rp(rp, max_demand, num_periods, config)
 
-    println("rp.profiles: ", rp.profiles)
 
     # If blended, print the old weights and then fit the new weights, to check whether fitting works
     if config[:blended]
         lr = config[:learning_rate]
         iter = config[:max_iter]
         tolerance = config[:tol]
-        println("Weights matrix", rp.weight_matrix)
-        println("\nLearning rate: $lr, Max iterations: $iter")
         println("Old weights: ", [sum(rp.weight_matrix[:, col]) for col in 1:num_periods])
         fit_rep_period_weights!(rp; weight_type = :convex, tol = tolerance, learning_rate = lr, niters = iter, adaptive_grad = false)
         println("Weights: ", [sum(rp.weight_matrix[:, col]) for col in 1:num_periods])
-        println("Weights matrix", rp.weight_matrix)
     end
 
     # Split demand and generation data
