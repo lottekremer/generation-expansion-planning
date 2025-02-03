@@ -252,6 +252,10 @@ function addPeriods!(config::Dict{Symbol,Any})
         method = :k_medoids
     elseif rp_config[:method] == "convex_hull"
         method = :convex_hull
+    elseif rp_config[:method] == "conical_bounded"
+        method = :convex_hull_with_null
+    elseif rp_config[:method] == "conical_unbounded"
+        method = :conical_hull
     else
         error("Invalid method specified in the config.")
     end
@@ -432,6 +436,13 @@ function process_rp(rp, max_demand, num_periods, config)
         lr = config[:learning_rate]
         iter = config[:max_iter]
         tolerance = config[:tol]
+        if config[:method] == :conical_hull
+            weight_type = :conical
+        elseif config[:method] == :convex_hull_with_null
+            weight_type = :conical_bounded
+        else
+            weight_type = :convex
+        end
         println("Old weights: ", [sum(rp.weight_matrix[:, col]) for col in 1:num_periods])
         fit_rep_period_weights!(rp; weight_type = :convex, tol = tolerance, learning_rate = lr, niters = iter, adaptive_grad = false)
         println("Weights: ", [sum(rp.weight_matrix[:, col]) for col in 1:num_periods])
