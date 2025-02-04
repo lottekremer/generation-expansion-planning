@@ -221,6 +221,7 @@ function save_result(result::ExperimentResult, config::Dict{Symbol,Any}; fixed_i
         "total_investment_cost" => result.total_investment_cost,
         "total_operational_cost" => result.total_operational_cost,
         "runtime" => result.runtime,
+        "process_time" => result.process_time
     )
     fname = (dir, config_output[:scalars]) |> joinpath
     open(fname, "w") do io
@@ -483,7 +484,7 @@ function process_rp(rp, max_demand, num_periods, config_total)
         weights = [sum(rp.weight_matrix[:, col]) for col in 1:num_periods]
         total_weights = sum(weights)
         weights = weights ./ (total_weights / config[:total_periods])
-        
+
     else
         weights = [sum(rp.weight_matrix[:, col]) for col in 1:num_periods]
 

@@ -1,4 +1,4 @@
-export ExperimentData, ExperimentResult, SecondStageData
+export ExperimentData, ExperimentResult, SecondStageData, add_time
 
 """
 Data needed to run a single experiment (i.e., a single optimization model)
@@ -116,6 +116,7 @@ struct ExperimentResult
     line_flow::AbstractDataFrame
     loss_of_load::AbstractDataFrame
     runtime::Float64
+    process_time::Float64
     
 
     function ExperimentResult(
@@ -128,7 +129,7 @@ struct ExperimentResult
         line_flow::DataFrame,
         loss_of_load::DataFrame,
         runtime::Float64
-    )
+        )
         return new(
             total_cost,
             total_investment_cost,
@@ -138,7 +139,12 @@ struct ExperimentResult
             production,
             line_flow,
             loss_of_load,
-            runtime
+            runtime,
+            0.0
         )
+    end
+
+    function add_time(result::ExperimentResult, time::Float64)
+        result.process_time += time
     end
 end
