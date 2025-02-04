@@ -31,7 +31,7 @@ function run_experiment(data::ExperimentData, optimizer_factory)::ExperimentResu
 
     period_weights = data.period_weights   
     tf = data.time_frame 
-    
+
     @info "Solving the problem"
     dt = @elapsed begin
         # 2. Add variables to the model
@@ -157,6 +157,7 @@ function run_fixed_investment(data::SecondStageData, optimizer_factory)::Experim
     T = data.time_steps
     L = data.transmission_lines
     S = data.scenarios
+    P = data.periods
 
     # Filter to select correct scenarios and time steps
 
@@ -166,8 +167,8 @@ function run_fixed_investment(data::SecondStageData, optimizer_factory)::Experim
     filter!(row -> row.scenario ∈ S, data.generation_availability)
 
     @info "Converting dataframes to dictionaries"
-    demand = dataframe_to_dict(data.demand, [:location, :time_step, :scenario], :demand)
-    generation_availability = dataframe_to_dict(data.generation_availability, [:location, :technology, :time_step, :scenario], :availability)
+    demand = dataframe_to_dict(data.demand, [:location, :time_step, :scenario, :period], :demand)
+    generation_availability = dataframe_to_dict(data.generation_availability, [:location, :technology, :time_step, :scenario, :period], :availability)
     total_investment_cost = data.total_investment_cost
     investment_MW = dataframe_to_dict(data.investment, [:location, :technology], :capacity)
     investment = dataframe_to_dict(data.investment, [:location, :technology], :units)
@@ -177,6 +178,7 @@ function run_fixed_investment(data::SecondStageData, optimizer_factory)::Experim
     export_capacity = dataframe_to_dict(data.transmission_capacities, [:from, :to], :export_capacity)
     import_capacity = dataframe_to_dict(data.transmission_capacities, [:from, :to], :import_capacity) 
 
+    tf = data.time_frame 
     scenario_probabilities = dataframe_to_dict(data.scenario_probabilities, :scenario, :probability)
 
     @info "Solving the problem"
@@ -187,13 +189,13 @@ function run_fixed_investment(data::SecondStageData, optimizer_factory)::Experim
         @info "Adding the variables"
         @variable(model, 0 ≤ total_operational_cost)
         @variable(model, 0 ≤ operational_cost_per_scenario[s ∈ S])
-        @variable(model, 0 ≤ production[n ∈ N, g ∈ G, t ∈ T, s ∈ S; (n, g) ∈ NG])
+        @variable(model, 0 ≤ production[n ∈ N, g ∈ G, t ∈ T, s ∈ S, p ∈ P; (n, g) ∈ NG])
         @variable(model,
             -import_capacity[n_from, n_to] ≤
-            line_flow[n_from ∈ N, n_to ∈ N, t ∈ T, s ∈ S; (n_from, n_to) ∈ L] ≤
+            line_flow[n_from ∈ N, n_to ∈ N, t ∈ T, s ∈ S, p ∈ P; (n_from, n_to) ∈ L] ≤
             export_capacity[n_from, n_to]
         )
-        @variable(model, 0 ≤ loss_of_load[n ∈ N, t ∈ T, s ∈ S] ≤ demand[n, t, s])
+        @variable(model, 0 ≤ loss_of_load[n ∈ N, t ∈ T, s ∈ S, p ∈ P] ≤ demand[n, t, s, p])
 
         # 3. Add an objective to the model
         @info "Adding the objective"
@@ -210,41 +212,41 @@ function run_fixed_investment(data::SecondStageData, optimizer_factory)::Experim
         @constraint(model, [s ∈ S],
             operational_cost_per_scenario[s]
             ==
-            8760 / length(T) * 
-            (sum(variable_cost[n, g] * production[n, g, t, s] for (n, g) ∈ NG, t ∈ T)
+            8760 / tf * 
+            (sum(variable_cost[n, g] * production[n, g, t, s, p] for (n, g) ∈ NG, t ∈ T, p ∈ P)
              +
-             data.value_of_lost_load * sum(loss_of_load[n, t, s] for n ∈ N, t ∈ T))
+             data.value_of_lost_load * sum(loss_of_load[n, t, s, p] for n ∈ N, t ∈ T, p ∈ P))
         )
 
         # Node balance
         @info "Adding the balance constraints"
-        @constraint(model, [n ∈ N, t ∈ T, s ∈ S], 
-            sum(production[n, g, t, s] for g ∈ G if (n, g) ∈ NG)
+        @constraint(model, [n ∈ N, t ∈ T, s ∈ S, p ∈ P], 
+            sum(production[n, g, t, s, p] for g ∈ G if (n, g) ∈ NG)
             +
-            sum(line_flow[n_from, n_to, t, s] for (n_from, n_to) ∈ L if n_to == n)
+            sum(line_flow[n_from, n_to, t, s,p] for (n_from, n_to) ∈ L if n_to == n)
             -
-            sum(line_flow[n_from, n_to, t, s] for (n_from, n_to) ∈ L if n_from == n)
+            sum(line_flow[n_from, n_to, t, s,p] for (n_from, n_to) ∈ L if n_from == n)
             +
-            loss_of_load[n, t, s]
+            loss_of_load[n, t, s,p]
             ==
-            demand[n, t, s]
+            demand[n, t, s,p]
         )
 
         # Maximum production
         @info "Adding the maximum production constraints"
-        @constraint(model, [n ∈ N, g ∈ G, t ∈ T, s ∈ S; (n, g) ∈ NG],
-            production[n, g, t, s] ≤ get(generation_availability, (n, g, t, s), 1.0) * investment_MW[n, g]
+        @constraint(model, [n ∈ N, g ∈ G, t ∈ T, s ∈ S, p ∈ P; (n, g) ∈ NG],
+            production[n, g, t, s, p] ≤ get(generation_availability, (n, g, t, s, p), 1.0) * investment_MW[n, g]
         )
 
         @info "Adding the ramping constraints"
-        ramping = @expression(model, [n ∈ N, g ∈ G, t ∈ T, s ∈ S; t > minimum(T) && (n, g) ∈ NG],
-            production[n, g, t, s] - production[n, g, t-1, s]
+        ramping = @expression(model, [n ∈ N, g ∈ G, t ∈ T, s ∈ S, p ∈ P; t > minimum(T) && (n, g) ∈ NG],
+            production[n, g, t, s, p] - production[n, g, t-1, s, p]
         )
-        for (n, g, t, s) ∈ eachindex(ramping)
+        for (n, g, t, s, p) ∈ eachindex(ramping)
             # Ramping up
-            @constraint(model, ramping[n, g, t, s] ≤ ramping_rate[n, g] * investment_MW[n, g])
+            @constraint(model, ramping[n, g, t, s, p] ≤ ramping_rate[n, g] * investment_MW[n, g])
             # Ramping down
-            @constraint(model, ramping[n, g, t, s] ≥ -ramping_rate[n, g] * investment_MW[n, g])
+            @constraint(model, ramping[n, g, t, s, p] ≥ -ramping_rate[n, g] * investment_MW[n, g])
         end
 
         # 5. Solve the model
@@ -252,9 +254,9 @@ function run_fixed_investment(data::SecondStageData, optimizer_factory)::Experim
         optimize!(model)
     end
 
-    production_decisions = jump_variable_to_df(production; dim_names=(:location, :technology, :time_step, :scenario), value_name=:production)
-    line_flow_decisions = jump_variable_to_df(line_flow; dim_names=(:from, :to, :time_step, :scenario), value_name=:flow)
-    loss_of_load_decisions = jump_variable_to_df(loss_of_load; dim_names=(:location, :time_step, :scenario), value_name=:loss_of_load)
+    production_decisions = jump_variable_to_df(production; dim_names=(:location, :technology, :time_step, :scenario, :period), value_name=:production)
+    line_flow_decisions = jump_variable_to_df(line_flow; dim_names=(:from, :to, :time_step, :scenario, :period), value_name=:flow)
+    loss_of_load_decisions = jump_variable_to_df(loss_of_load; dim_names=(:location, :time_step, :scenario, :period), value_name=:loss_of_load)
     total_cost = value.(total_operational_cost)+value.(total_investment_cost)
     operational_cost_per_scenario = jump_variable_to_df(operational_cost_per_scenario; dim_names=(:scenario,), value_name=:operational_cost)
 

@@ -63,6 +63,7 @@ struct SecondStageData
     transmission_lines::Vector{Tuple{Symbol,Symbol}}
     generators::Vector{Tuple{Symbol,Symbol}}
     generation_technologies::Vector{Symbol}
+    periods::Vector{Int}
     
     # Dataframes
     demand::AbstractDataFrame
@@ -92,6 +93,7 @@ struct SecondStageData
             sets[:transmission_lines],
             secondStage[:generators],
             secondStage[:generation_technologies],
+            secondStage[:periods],
             secondStage[:demand],
             secondStage[:generation_availability],
             data[:generation],
