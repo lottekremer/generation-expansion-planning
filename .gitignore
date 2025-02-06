@@ -37,6 +37,7 @@ case_studies/stylized_EU/res/2_blended/*
 case_studies/stylized_EU/res/3_blended_smallertol/*
 case_studies/stylized_EU/res/4_allmonths/*
 case_studies/stylized_EU/res/5_learningrates/*
+case_studies/stylized_EU/res/6_newscalingandloss/*
 case_studies/stylized_EU/small_tests/test_blended_better/*
 case_studies/stylized_EU/small_tests/test_blended_euclidean/*
 case_studies/stylized_EU/small_tests/test_blended_worse_2/*
