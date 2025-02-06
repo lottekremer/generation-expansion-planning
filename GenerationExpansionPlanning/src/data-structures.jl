@@ -108,7 +108,7 @@ struct SecondStageData
     end
 end
 
-struct ExperimentResult
+mutable struct ExperimentResult
     total_cost::Float64
     total_investment_cost::Float64
     total_operational_cost::Float64
@@ -120,7 +120,6 @@ struct ExperimentResult
     runtime::Float64
     process_time::Float64
     
-
     function ExperimentResult(
         total_cost::Float64,
         total_investment_cost::Float64,
@@ -145,8 +144,8 @@ struct ExperimentResult
             0.0
         )
     end
+end
 
-    function add_time(result::ExperimentResult, time::Float64)
-        result.process_time += time
-    end
+function add_time(result::ExperimentResult, time::Float64)
+    result.process_time += time
 end

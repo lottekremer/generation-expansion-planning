@@ -75,7 +75,6 @@ function read_config(config_path::AbstractString)::Dict{Symbol,Any}
     # Scenarios and their probabilities 
     if sets_config[:scenarios] == "auto"
         sets_config[:scenarios] = data_config[:demand].scenario ∪ data_config[:generation_availability].scenario
-        print("Scenarios: ", sets_config[:scenarios])
     end
     sets_config[:scenarios] = Symbol.(sets_config[:scenarios])
 
@@ -156,6 +155,9 @@ function dataframe_to_dict(
     keys::Union{Symbol,Vector{Symbol}},
     value::Symbol
 )::Dict
+    if value != :capacity
+        df[!, value] = round.(df[!, value], digits=6)
+    end
     return if typeof(keys) <: AbstractVector
         Dict(Tuple.(eachrow(df[!, keys])) .=> Vector(df[!, value]))
     else
@@ -207,6 +209,8 @@ function save_result(result::ExperimentResult, config::Dict{Symbol,Any}; fixed_i
     mkpath(dir)
 
     function save_dataframe(df::AbstractDataFrame, file::String)
+        float_columns = findall(col -> eltype(col) <: AbstractFloat, eachcol(df))
+        df[!, float_columns] = round.(df[!, float_columns], digits=6)
         full_path = (dir, file) |> joinpath
         CSV.write(full_path, df)
     end
@@ -218,9 +222,9 @@ function save_result(result::ExperimentResult, config::Dict{Symbol,Any}; fixed_i
     save_dataframe(result.operational_cost_per_scenario, config_output[:operational_cost_per_scenario])
 
     scalar_data = Dict(
-        "total_cost" => result.total_cost,
-        "total_investment_cost" => result.total_investment_cost,
-        "total_operational_cost" => result.total_operational_cost,
+        "total_cost" => round(result.total_cost, digits=6),
+        "total_investment_cost" => round(result.total_investment_cost, sigdigits=6),
+        "total_operational_cost" => round(result.total_operational_cost, sigdigits=6),
         "runtime" => result.runtime,
         "process_time" => result.process_time
     )
@@ -349,16 +353,12 @@ function addPeriods!(config::Dict{Symbol,Any})
         timesteps = 1:maximum(demand_temp.time_step)
         scenario_time[!, :period] = Int.(floor.((scenario_time.time_temp .- 1) ./ period_duration) .+ 1)
 
-        # Cluster based on this data and drop the scenario column as it is not needed
+        # Cluster based on this data and name scenario column "cross"
         data, max_demand = process_data(demand_temp, generation_temp, scenarios, period_duration, timesteps)
-        data = select(data, Not(:scenario)) 
+        data.scenario .= "cross"
         rp = find_representative_periods(data, num_periods; method = method, distance = distance)
         demand_res, generation_res, weights = process_rp(rp, max_demand, num_periods, config)
 
-        # Add scenario column with "cross" to the demand and generation data as actual scenario is not needed in model
-        demand_res[!, :scenario] .= "cross"
-        generation_res[!, :scenario] .= "cross"
-    
         # Add to config 
         rp_config[:periods] = 1:(num_periods)
         rp_config[:period_weights] = weights
@@ -389,6 +389,10 @@ function process_data(demand_data, availability_data, scenarios, period_duration
     demand_data = filter(row -> row.scenario in scenarios, demand_data)
     generation_availability_data = filter(row -> row.scenario in scenarios, availability_data)
 
+    # Filter for timesteps
+    demand_data = filter(row -> row.time_step in timesteps, demand_data)
+    generation_availability_data = filter(row -> row.time_step in timesteps, generation_availability_data)
+
     # Scale the demand data so that it is a value between 0 and 1 but store the max, do this per location in demand
     max_demand = DataFrame()
     for location in unique(demand_data.location)
@@ -396,17 +400,28 @@ function process_data(demand_data, availability_data, scenarios, period_duration
         max_demand = vcat(max_demand, DataFrame(location = location, max_demand = maximum(location_data.demand)))
     end
 
-    # max_demand_value = maximum(max_demand.max_demand)
-    # max_demand[!, :max_demand] .= max_demand_value
-    
-    demand_data = innerjoin(demand_data, max_demand, on = :location)
-    demand_data.demand = demand_data.demand ./ demand_data.max_demand
-
     # Rename to match the TulipaClustering names of :value and :timestep
     rename!(demand_data, :demand => :value)
     rename!(demand_data, :time_step => :timestep)
     rename!(generation_availability_data, :availability => :value)
     rename!(generation_availability_data, :time_step => :timestep)
+
+    # max_demand_value = maximum(max_demand.max_demand)
+    # max_demand[!, :max_demand] .= max_demand_value
+
+    demand_data = innerjoin(demand_data, max_demand, on = :location)
+    demand_data.value = demand_data.value ./ demand_data.max_demand
+
+    # Scale generation availability data to A / D where D is the scaled demand
+    # Create a dictionary for quick lookup of demand values
+    demand_dict = Dict((row.location, row.timestep, row.scenario) => row.value for row in eachrow(demand_data))
+
+    for row in eachrow(generation_availability_data)
+        key = (row.location, row.timestep, row.scenario)
+        if haskey(demand_dict, key)
+            row.value /= demand_dict[key]
+        end
+    end
 
     # Combine the demand and availability data into one dataframe in which profile_name is location_technology/demand, then timestep then value
     demand_data.location = string.(demand_data.location, "_demand")
@@ -416,8 +431,7 @@ function process_data(demand_data, availability_data, scenarios, period_duration
     combined_data = vcat(demand_data, generation_availability_data)
     rename!(combined_data, :location => :profile_name)
 
-    # Only select timesteps in time_steps and adjust the timesteps to start at 1
-    combined_data = filter(row -> row.timestep in timesteps, combined_data)
+    # Adjust timesteps to start at 1
     combined_data.timestep = combined_data.timestep .-  minimum(combined_data.timestep) .+ 1
     
     # Split the data into periods using function from TulipaClustering
@@ -501,18 +515,33 @@ function process_rp(rp, max_demand, num_periods, config_total)
 
     # Get correct demand dataframes
     demand_res = filter(row -> row.technology == "demand", rp.profiles)
+    generation_res = filter(row -> row.technology != "demand", rp.profiles)
+    rename!(demand_res, :value => :demand)
+    
+    # Get symbols
     string_columns_demand_res = findall(col -> eltype(col) <: AbstractString, eachcol(demand_res))
+    string_columns_availability_res = findall(col -> eltype(col) <: AbstractString, eachcol(generation_res))
     demand_res[!, string_columns_demand_res] = Symbol.(demand_res[!, string_columns_demand_res])
-    demand_res = leftjoin(demand_res, max_demand, on = :location)
-    demand_res[!, :demand] = demand_res[!, :value] .* demand_res[!, :max_demand]
-    demand_res = select(demand_res, Not([:technology, :profile_name, :value, :max_demand]))
+    generation_res[!, string_columns_availability_res] = Symbol.(generation_res[!, string_columns_availability_res])
+
+    # Rescale the data
+    demand_lookup = Dict((row.rep_period, row.location, row.timestep, row.scenario) => row.demand for row in eachrow(demand_res))
+
+    for row in eachrow(generation_res)
+        key = (row.rep_period, row.location, row.timestep, row.scenario)
+        if haskey(demand_lookup, key)
+            row.value *= demand_lookup[key]
+        end
+    end
+
+    rename!(generation_res, :value => :availability)
+    generation_res = select(generation_res, Not([:profile_name]))
+
+    demand_res[!, :max_demand] = [max_demand[max_demand.location .== loc, :max_demand][1] for loc in demand_res.location]
+    demand_res[!, :demand] = demand_res[!, :demand] .* demand_res[!, :max_demand]
+    demand_res = select(demand_res, Not([:technology, :profile_name, :max_demand]))
     
     rename!(demand_res, :timestep => :time_step)
-
-    # Get correct generation availability dataframes
-    generation_res = filter(row -> row.technology != "demand", rp.profiles)
-    generation_res = select(generation_res, Not(:profile_name))
-    rename!(generation_res, :value => :availability)
     rename!(generation_res, :timestep => :time_step)
 
     # Add period weights
