@@ -194,10 +194,36 @@ function save_result(result::ExperimentResult, config::Dict{Symbol,Any}; fixed_i
     dir = config_output[:dir]
     blended = config[:input][:rp][:blended]
 
-    if blended
-        addon = "blended"
+    if config[:input][:rp][:clustering_type] == "cross_scenario"
+        addon = "cr_"
+    elseif config[:input][:rp][:clustering_type] == "per_scenario"
+        addon = "per_"
+    elseif config[:input][:rp][:clustering_type] == "group_scenario"
+        addon = "gr_"
     else
-        addon = "non_blended"
+        addon = ""
+    end
+
+    if config[:input][:rp][:method] == "k_means"
+        addon *= "kmn_"
+    elseif config[:input][:rp][:method] == "k_medoids"
+        addon *= "kmd_"
+    elseif config[:input][:rp][:method] == "convex_hull"
+        addon *= "cvx_"
+    end
+
+    if config[:input][:rp][:distance] == "SqEuclidean"
+        addon *= "sq_"
+    elseif config[:input][:rp][:distance] == "CosineDist"
+        addon *= "cos_"
+    elseif config[:input][:rp][:distance] == "CityBlock"
+        addon *= "cb_"
+    end
+    
+    if !config[:input][:rp][:use_periods]
+        addon *= "stochastic"
+    else
+        addon *= string(config[:input][:rp][:number_of_periods])
     end
 
     if fixed_investment
@@ -286,7 +312,8 @@ function addPeriods!(config::Dict{Symbol,Any})
 
         # For each day, all scenarios are concatenated, so the number of periods is divided by the number of scenarios to make it comparable to the other methods
         num_periods = floor(Int,num_periods / length(scenarios))
-
+        print("num_periods: ", num_periods)
+        print("length(scenarios): ", length(scenarios))
         # Find representative periods and process the results
         rp = find_representative_periods(data, num_periods; method = method, distance = distance)
         demand_res, generation_res, weights = process_rp(rp, max_demand, num_periods, config)
