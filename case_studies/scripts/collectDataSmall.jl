@@ -64,5 +64,5 @@ for folder in folders
 end
 
 # Save the combined data to a new CSV file
-CSV.write("./case_studies/stylized_EU/res/results_csv/7_distribution.csv", result)
+CSV.write("./case_studies/stylized_EU/res/results_csv/9_distribution.csv", result)
 println("Table with all information has been created")

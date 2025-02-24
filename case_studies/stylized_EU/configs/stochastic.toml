@@ -1,0 +1,37 @@
+[output]
+operational_cost_per_scenario = "operational_costs.csv"
+loss_of_load = "loss_of_load.csv"
+scalars = "scalars.toml"
+investment = "investment.csv"
+production = "production.csv"
+line_flow = "line_flow.csv"
+dir = "output_stochastic/"
+
+[input.rp]
+period_duration = 24
+method = "k_medoids"
+number_of_periods = 100
+clustering_type = "per_scenario"
+distance = "CosineDist"
+blended = false
+learning_rate = 0.01
+max_iter = 1000
+use_periods = false
+tol = 0.00001
+
+[input.sets]
+scenarios = ["1982", "1987", "1992", "1995", "1997", "2002", "2008", "2009", "2012"]
+locations = "auto"
+generators = "auto"
+time_steps = "1:720"
+transmission_lines = "auto"
+
+[input.data]
+transmission_lines = "transmission_lines.csv"
+generation = "generation.csv"
+scenario_probabilities = "auto"
+scalars = "scalars.toml"
+demand = "demand.csv"
+generation_availability = "generation_availability.csv"
+dir = "inputs"
+

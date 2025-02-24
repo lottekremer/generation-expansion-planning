@@ -45,6 +45,18 @@ function read_config(config_path::AbstractString)::Dict{Symbol,Any}
     config_dir = full_path |> dirname  # directory where the config is located
     input_dir = (config_dir, "..", data_config[:dir]) |> joinpath |> abspath  # input data directory
 
+    # Check if seeds field exists in config and method is kmeans or kmedoids
+    if haskey(data_config, :seed) && (config[:input][:rp][:method] in ["k_means", "k_medoids"]) && config[:input][:rp][:use_periods]
+        seed_file = (input_dir,"seeds$(data_config[:seed]).json") |> joinpath |> abspath
+        if isfile(seed_file)
+            seed_data = JSON.parsefile(seed_file)
+            num_periods = rp_config[:number_of_periods]
+            if haskey(seed_data, string(num_periods))
+                Random.seed!(seed_data[string(num_periods)])            
+            end
+        end
+    end
+
     # Read the dataframes from files
     function read_file!(path::AbstractString, key::Symbol, format::Symbol)
         if format ≡ :CSV
@@ -191,6 +203,7 @@ end
 
 function save_result(result::ExperimentResult, config::Dict{Symbol,Any}; fixed_investment::Bool=false)
     config_output = config[:output]
+    data_config = config[:input][:data]
     dir = config_output[:dir]
     blended = config[:input][:rp][:blended]
 
@@ -226,6 +239,10 @@ function save_result(result::ExperimentResult, config::Dict{Symbol,Any}; fixed_i
         addon *= string(config[:input][:rp][:number_of_periods])
     end
 
+    if  haskey(data_config, :seed)
+        addon *= "/seed_$(data_config[:seed])"
+    end
+
     if fixed_investment
         dir = joinpath(dir*"_$(addon)", "fixed")
     else
@@ -248,7 +265,7 @@ function save_result(result::ExperimentResult, config::Dict{Symbol,Any}; fixed_i
     save_dataframe(result.operational_cost_per_scenario, config_output[:operational_cost_per_scenario])
 
     scalar_data = Dict(
-        "total_cost" => round(result.total_cost, digits=6),
+        "total_cost" => round(result.total_cost, sigdigits=6),
         "total_investment_cost" => round(result.total_investment_cost, sigdigits=6),
         "total_operational_cost" => round(result.total_operational_cost, sigdigits=6),
         "runtime" => result.runtime,
