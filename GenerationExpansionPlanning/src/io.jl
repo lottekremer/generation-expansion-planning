@@ -81,6 +81,14 @@ function read_config(config_path::AbstractString)::Dict{Symbol,Any}
     read_file!(input_dir, :transmission_lines, :CSV)
     read_file!(input_dir, :scalars, :TOML)
 
+    # If test run read investment decisions
+    if haskey(config, :test) && config[:test][:run]
+        test_dir = (config_dir, config[:test][:dir]) |> joinpath |> abspath
+        read_file!(test_dir, :investment, :CSV)
+        read_file!(test_dir, :cost, :TOML)
+        data_config[:cost] = data_config[:cost][:total_investment_cost]
+    end
+
     # Remove the directory entry as it has been added to the file paths
     delete!(data_config, :dir)
 
@@ -138,12 +146,33 @@ function read_config(config_path::AbstractString)::Dict{Symbol,Any}
     if rp_config[:use_periods]
         addPeriods!(config) # This function creates the representative periods
     else
-        # If no representative periods are used, create one large period so that the model can run as normal
-        data_config[:demand][!, :rep_period] = ones(Int, size(data_config[:demand], 1))
-        data_config[:generation_availability][!, :rep_period] = ones(Int, size(data_config[:generation_availability], 1))
-        rp_config[:periods] = [1]
-        rp_config[:period_weights] = [1.0]
-        rp_config[:periods_per_scenario] = [(1, scenario) for scenario in sets_config[:scenarios]]
+
+        # If no representative periods are used, split into periods (as we allow no inter-period constraints)
+        demand_data = data_config[:demand]
+        generation_data = data_config[:generation_availability]
+        rename!(demand_data, :time_step => :timestep)
+        rename!(generation_data, :time_step => :timestep)
+        split_into_periods!(demand_data; period_duration=rp_config[:period_duration])
+        split_into_periods!(generation_data; period_duration=rp_config[:period_duration])
+        rename!(demand_data, :timestep => :time_step)
+        rename!(generation_data, :timestep => :time_step)
+        rename!(demand_data, :period => :rep_period)
+        rename!(generation_data, :period => :rep_period)
+        data_config[:demand] = demand_data
+        data_config[:generation_availability] = generation_data
+
+        rp_config[:periods] = 1:(length(sets_config[:time_steps])/rp_config[:period_duration])
+        rp_config[:period_weights] = ones(length(rp_config[:periods]))
+        rp_config[:periods_per_scenario] = unique(Tuple.(map(collect, zip(demand_data.rep_period, demand_data.scenario))))
+
+        # Create copies to not lose the old data
+        config[:input][:secondStage] = Dict{Symbol, Any}()
+        config[:input][:secondStage][:demand] = deepcopy(data_config[:demand])
+        config[:input][:secondStage][:generation_availability] = deepcopy(data_config[:generation_availability])
+        config[:input][:secondStage][:scenarios] = deepcopy(sets_config[:scenarios])
+        sets_config[:time_steps] = 1:rp_config[:period_duration]
+        config[:input][:secondStage][:time_steps] = deepcopy(sets_config[:time_steps])
+        config[:input][:secondStage][:scenario_probabilities] = deepcopy(data_config[:scenario_probabilities])
     end
 
     config[:output][:dir] = (config_dir, config[:output][:dir]) |> joinpath |> abspath
@@ -233,7 +262,7 @@ function save_result(result::ExperimentResult, config::Dict{Symbol,Any}; fixed_i
         addon *= "cb_"
     end
     
-    if !config[:input][:rp][:use_periods]
+    if !config[:input][:rp][:use_periods] && !fixed_investment
         addon *= "stochastic"
     else
         addon *= string(config[:input][:rp][:number_of_periods])
@@ -243,10 +272,12 @@ function save_result(result::ExperimentResult, config::Dict{Symbol,Any}; fixed_i
         addon *= "/seed_$(data_config[:seed])"
     end
 
-    if fixed_investment
-        dir = joinpath(dir*"_$(addon)", "fixed")
-    else
+    if !fixed_investment
         dir = joinpath(dir*"_$(addon)", "initial_run")
+    elseif fixed_investment && haskey(config, :test) && config[:test][:run]
+        dir = joinpath(dir*"_$(addon)", "test")
+    else
+        dir = joinpath(dir*"_$(addon)", "fixed")
     end
 
     mkpath(dir)
@@ -484,15 +515,15 @@ function process_data(demand_data, availability_data, scenarios, period_duration
     return combined_data, max_demand
 end
 
-function edit_config(config::Dict{Symbol,Any}, result::ExperimentResult)
+function edit_config(config::Dict{Symbol,Any}, investment::DataFrame, cost::Float64)
     secondStage_config = config[:input][:secondStage]   
 
     # Set investment field
-    secondStage_config[:investment] = result.investment
-    secondStage_config[:total_investment_cost] = result.total_investment_cost
+    secondStage_config[:investment] = investment
+    secondStage_config[:total_investment_cost] = cost
 
     # Deduce new set NG of location + generation technology
-    secondStage_config[:generators] = Tuple.(map(collect, zip(result.investment.location, result.investment.technology)))
+    secondStage_config[:generators] = Tuple.(map(collect, zip(investment.location, investment.technology)))
     secondStage_config[:generation_technologies] = unique([g[2] for g ∈ secondStage_config[:generators]])
 
     # Make sure that both demand an availability data are in periods
@@ -503,25 +534,10 @@ function edit_config(config::Dict{Symbol,Any}, result::ExperimentResult)
     
     demand_data = filter(row -> row.scenario in scenarios, demand_data)
     generation_availability_data = filter(row -> row.scenario in scenarios, availability_data)
-    
-    # Rename to match the TulipaClustering names of :value and :timestep
-    rename!(demand_data, :time_step => :timestep)
-    rename!(generation_availability_data, :time_step => :timestep)
-    
-    # Only select timesteps necessary and adjust the timesteps to start at 1
-    timesteps = secondStage_config[:time_steps]
-    demand_data = filter(row -> row.timestep in timesteps, demand_data)
-    generation_availability_data = filter(row -> row.timestep in timesteps, generation_availability_data)
-    demand_data.timestep = demand_data.timestep .-  minimum(demand_data.timestep) .+ 1
-    generation_availability_data.timestep = generation_availability_data.timestep .-  minimum(generation_availability_data.timestep) .+ 1
-        
-    # Split the data into periods using function from TulipaClustering
-    split_into_periods!(demand_data; period_duration=period_duration)
-    split_into_periods!(generation_availability_data; period_duration=period_duration)
+    rename!(demand_data, :rep_period => :period)
+    rename!(generation_availability_data, :rep_period => :period)
 
-    # Rename back
-    rename!(demand_data, :timestep => :time_step)
-    rename!(generation_availability_data, :timestep => :time_step)
+    println("Demand data: ", first(demand_data,10))	
 
     # Set the new data
     secondStage_config[:demand] = demand_data

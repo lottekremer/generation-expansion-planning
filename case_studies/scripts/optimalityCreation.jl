@@ -2,6 +2,8 @@ using CSV
 using DataFrames
 using Random
 
+Random.seed!(4861957)
+
 println("Reading demand data...")
 demand = CSV.read("./case_studies/optimality/inputs/demand.csv", DataFrame)
 println("Demand data read successfully.")
@@ -10,162 +12,162 @@ println("Generation availability data read successfully.")
 locations = unique(demand.location)
 scenarios = unique(demand.scenario)
 
-# println("Creating close data...")
+println("Creating close data...")
 
-# # Create 30 artificial days close to 1, 2, 3 with small variations in demand and generation, with every location altered in same direction
-# demand_close = deepcopy(demand)
-# generation_availability_close = deepcopy(generation_availability)
+# Create 30 artificial days close to 1, 2, 3 with small variations in demand and generation, with every location altered in same direction
+demand_close = deepcopy(demand)
+generation_availability_close = deepcopy(generation_availability)
 
-# sd = 0.1
-# new_demand_entries = DataFrame()  # Buffer for new demand data
-# new_generation_entries = DataFrame()  # Buffer for new generation data
+sd = 0.1
+new_demand_entries = DataFrame()  # Buffer for new demand data
+new_generation_entries = DataFrame()  # Buffer for new generation data
 
-# for i in 1:30
-#     for p in [1,2,3]
-#         for scenario in scenarios
-#             random_factor = 1 + sd * randn()
+for i in 1:30
+    for p in [1,2,3]
+        for scenario in scenarios
+            random_factor = 1 + sd * randn()
             
-#             # Filter once and modify in-place
-#             demand_new = filter(row -> row.period == p && row.scenario == scenario, demand)
-#             demand_new.demand .*= random_factor
-#             demand_new.period .= i + 3 + 30 * (p - 1)
+            # Filter once and modify in-place
+            demand_new = filter(row -> row.period == p && row.scenario == scenario, demand)
+            demand_new.demand .*= random_factor
+            demand_new.period .= i + 3 + 30 * (p - 1)
             
-#             append!(new_demand_entries, demand_new)
+            append!(new_demand_entries, demand_new)
 
-#             for technology in ["SunPV", "WindOn", "WindOff"]
-#                 random_factor = 1 + sd * randn()
-#                 generation_new = filter(row -> row.period == p && row.technology == technology && row.scenario == scenario, generation_availability)
-#                 generation_new.availability .*= random_factor
-#                 generation_new.period .= i + 3 + 30 * (p - 1)
+            for technology in ["SunPV", "WindOn", "WindOff"]
+                random_factor = 1 + sd * randn()
+                generation_new = filter(row -> row.period == p && row.technology == technology && row.scenario == scenario, generation_availability)
+                generation_new.availability .*= random_factor
+                generation_new.period .= i + 3 + 30 * (p - 1)
 
-#                 append!(new_generation_entries, generation_new)
-#             end
-#         end
-#     end
-#     println("Finished day $i")	
-# end
+                append!(new_generation_entries, generation_new)
+            end
+        end
+    end
+    println("Finished day $i")	
+end
 
-# append!(demand_close, new_demand_entries)
-# append!(generation_availability_close, new_generation_entries)
+append!(demand_close, new_demand_entries)
+append!(generation_availability_close, new_generation_entries)
 
-# CSV.write("./case_studies/optimality/inputs_close/demand.csv", demand_close)
-# CSV.write("./case_studies/optimality/inputs_close/generation_availability.csv", generation_availability_close)
+CSV.write("./case_studies/optimality/inputs_close/demand.csv", demand_close)
+CSV.write("./case_studies/optimality/inputs_close/generation_availability.csv", generation_availability_close)
 
-# println("Creating mixed variation data...")
+println("Creating mixed variation data...")
 
-# # Create 30 artificial days with small variations per location
-# demand_close_mixed = deepcopy(demand)
-# generation_availability_close_mixed = deepcopy(generation_availability)
+# Create 30 artificial days with small variations per location
+demand_close_mixed = deepcopy(demand)
+generation_availability_close_mixed = deepcopy(generation_availability)
 
-# sd = 0.1
-# new_demand_entries = DataFrame()
-# new_generation_entries = DataFrame()
+sd = 0.1
+new_demand_entries = DataFrame()
+new_generation_entries = DataFrame()
 
-# for i in 1:30
-#     for p in [1,2,3]
-#         for scenario in scenarios
-#             println("Day $i, period $p, scenario $scenario")	
-#             random_factors = Dict(location => 1 + sd * randn() for location in locations)
+for i in 1:30
+    for p in [1,2,3]
+        for scenario in scenarios
+            println("Day $i, period $p, scenario $scenario")	
+            random_factors = Dict(location => 1 + sd * randn() for location in locations)
 
-#             for location in locations
-#                 demand_new = filter(row -> row.period == p && row.location == location && row.scenario == scenario, demand)
-#                 demand_new.demand .*= random_factors[location]
-#                 demand_new.period .= i + 3 + 30 * (p - 1)
+            for location in locations
+                demand_new = filter(row -> row.period == p && row.location == location && row.scenario == scenario, demand)
+                demand_new.demand .*= random_factors[location]
+                demand_new.period .= i + 3 + 30 * (p - 1)
                 
-#                 append!(new_demand_entries, demand_new)
+                append!(new_demand_entries, demand_new)
 
-#                 for technology in ["SunPV", "WindOn", "WindOff"]
-#                     generation_new = filter(row -> row.period == p && row.technology == technology && row.location == location && row.scenario == scenario, generation_availability)
-#                     generation_new.availability .*= 1 + sd * randn()
-#                     generation_new.period .= i + 3 + 30 * (p - 1)
+                for technology in ["SunPV", "WindOn", "WindOff"]
+                    generation_new = filter(row -> row.period == p && row.technology == technology && row.location == location && row.scenario == scenario, generation_availability)
+                    generation_new.availability .*= 1 + sd * randn()
+                    generation_new.period .= i + 3 + 30 * (p - 1)
 
-#                     append!(new_generation_entries, generation_new)
-#                 end
-#             end
-#         end
-#     end
-#     println("Finished day $i")
-# end
+                    append!(new_generation_entries, generation_new)
+                end
+            end
+        end
+    end
+    println("Finished day $i")
+end
 
-# append!(demand_close_mixed, new_demand_entries)
-# append!(generation_availability_close_mixed, new_generation_entries)
+append!(demand_close_mixed, new_demand_entries)
+append!(generation_availability_close_mixed, new_generation_entries)
 
-# CSV.write("./case_studies/optimality/inputs_close_mixed/demand.csv", demand_close_mixed)
-# CSV.write("./case_studies/optimality/inputs_close_mixed/generation_availability.csv", generation_availability_close_mixed)
+CSV.write("./case_studies/optimality/inputs_close_mixed/demand.csv", demand_close_mixed)
+CSV.write("./case_studies/optimality/inputs_close_mixed/generation_availability.csv", generation_availability_close_mixed)
 
-# # ------------------- CONVEX COMBINATION -------------------
+# ------------------- CONVEX COMBINATION -------------------
 
-# println("Creating convex data...")
+println("Creating convex data...")
 
-# demand_convex = deepcopy(demand)
-# generation_availability_convex = deepcopy(generation_availability)
+demand_convex = deepcopy(demand)
+generation_availability_convex = deepcopy(generation_availability)
 
-# new_demand_entries = DataFrame()
-# new_generation_entries = DataFrame()
+new_demand_entries = DataFrame()
+new_generation_entries = DataFrame()
 
-# for i in 1:90
-#     for scenario in scenarios
-#         demand_periods = [filter(row -> row.period == p && row.scenario == scenario, demand) for p in 1:3]
-#         generation_periods = [filter(row -> row.period == p && row.scenario == scenario, generation_availability) for p in 1:3]
+for i in 1:90
+    for scenario in scenarios
+        demand_periods = [filter(row -> row.period == p && row.scenario == scenario, demand) for p in 1:3]
+        generation_periods = [filter(row -> row.period == p && row.scenario == scenario, generation_availability) for p in 1:3]
 
-#         r = rand(3)
-#         r /= sum(r)
+        r = rand(3)
+        r /= sum(r)
 
-#         demand_new = deepcopy(demand_periods[1])
-#         demand_new.demand .= r[1] .* demand_periods[1].demand .+ r[2] .* demand_periods[2].demand .+ r[3] .* demand_periods[3].demand
-#         demand_new.period .= i + 3
-#         append!(new_demand_entries, demand_new)
+        demand_new = deepcopy(demand_periods[1])
+        demand_new.demand .= r[1] .* demand_periods[1].demand .+ r[2] .* demand_periods[2].demand .+ r[3] .* demand_periods[3].demand
+        demand_new.period .= i + 3
+        append!(new_demand_entries, demand_new)
 
-#         generation_new = deepcopy(generation_periods[1])
-#         generation_new.availability .= r[1] .* generation_periods[1].availability .+ r[2] .* generation_periods[2].availability .+ r[3] .* generation_periods[3].availability
-#         generation_new.period .= i + 3
-#         append!(new_generation_entries, generation_new)
-#     end
-#     println("Finished day $i")
-# end
+        generation_new = deepcopy(generation_periods[1])
+        generation_new.availability .= r[1] .* generation_periods[1].availability .+ r[2] .* generation_periods[2].availability .+ r[3] .* generation_periods[3].availability
+        generation_new.period .= i + 3
+        append!(new_generation_entries, generation_new)
+    end
+    println("Finished day $i")
+end
 
-# append!(demand_convex, new_demand_entries)
-# append!(generation_availability_convex, new_generation_entries)
+append!(demand_convex, new_demand_entries)
+append!(generation_availability_convex, new_generation_entries)
 
-# CSV.write("./case_studies/optimality/inputs_convex/demand.csv", demand_convex)
-# CSV.write("./case_studies/optimality/inputs_convex/generation_availability.csv", generation_availability_convex)
+CSV.write("./case_studies/optimality/inputs_convex/demand.csv", demand_convex)
+CSV.write("./case_studies/optimality/inputs_convex/generation_availability.csv", generation_availability_convex)
 
 
-# # ------------------- SOFTMAX COMBINATION -------------------
+# ------------------- SOFTMAX COMBINATION -------------------
 
-# println("Creating softmax data...")
+println("Creating softmax data...")
 
-# demand_softmax = deepcopy(demand)
-# generation_availability_softmax = deepcopy(generation_availability)
+demand_softmax = deepcopy(demand)
+generation_availability_softmax = deepcopy(generation_availability)
 
-# new_demand_entries = DataFrame()
-# new_generation_entries = DataFrame()
+new_demand_entries = DataFrame()
+new_generation_entries = DataFrame()
 
-# for i in 1:90
-#     for scenario in scenarios
-#         demand_periods = [filter(row -> row.period == p && row.scenario == scenario, demand) for p in 1:3]
-#         generation_periods = [filter(row -> row.period == p && row.scenario == scenario, generation_availability) for p in 1:3]
+for i in 1:90
+    for scenario in scenarios
+        demand_periods = [filter(row -> row.period == p && row.scenario == scenario, demand) for p in 1:3]
+        generation_periods = [filter(row -> row.period == p && row.scenario == scenario, generation_availability) for p in 1:3]
 
-#         r = exp.(rand(3) * 2 .- 1)  # Apply softmax transformation
-#         r /= sum(r)
+        r = exp.(rand(3) * 2 .- 1)  # Apply softmax transformation
+        r /= sum(r)
 
-#         demand_new = deepcopy(demand_periods[1])
-#         demand_new.demand .= r[1] .* demand_periods[1].demand .+ r[2] .* demand_periods[2].demand .+ r[3] .* demand_periods[3].demand
-#         demand_new.period .= i + 3
-#         append!(new_demand_entries, demand_new)
+        demand_new = deepcopy(demand_periods[1])
+        demand_new.demand .= r[1] .* demand_periods[1].demand .+ r[2] .* demand_periods[2].demand .+ r[3] .* demand_periods[3].demand
+        demand_new.period .= i + 3
+        append!(new_demand_entries, demand_new)
 
-#         generation_new = deepcopy(generation_periods[1])
-#         generation_new.availability .= r[1] .* generation_periods[1].availability .+ r[2] .* generation_periods[2].availability .+ r[3] .* generation_periods[3].availability
-#         generation_new.period .= i + 3
-#         append!(new_generation_entries, generation_new)
-#     end
-# end
+        generation_new = deepcopy(generation_periods[1])
+        generation_new.availability .= r[1] .* generation_periods[1].availability .+ r[2] .* generation_periods[2].availability .+ r[3] .* generation_periods[3].availability
+        generation_new.period .= i + 3
+        append!(new_generation_entries, generation_new)
+    end
+end
 
-# append!(demand_softmax, new_demand_entries)
-# append!(generation_availability_softmax, new_generation_entries)
+append!(demand_softmax, new_demand_entries)
+append!(generation_availability_softmax, new_generation_entries)
 
-# CSV.write("./case_studies/optimality/inputs_softmax/demand.csv", demand_softmax)
-# CSV.write("./case_studies/optimality/inputs_softmax/generation_availability.csv", generation_availability_softmax)
+CSV.write("./case_studies/optimality/inputs_softmax/demand.csv", demand_softmax)
+CSV.write("./case_studies/optimality/inputs_softmax/generation_availability.csv", generation_availability_softmax)
 
 # ------------------- CENTERED COMBINATION -------------------
 
