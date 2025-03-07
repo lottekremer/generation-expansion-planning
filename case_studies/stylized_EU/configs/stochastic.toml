@@ -5,26 +5,24 @@ scalars = "scalars.toml"
 investment = "investment.csv"
 production = "production.csv"
 line_flow = "line_flow.csv"
-dir = "output_stochastic/"
-
-[input.rp]
-period_duration = 24
-method = "k_medoids"
-number_of_periods = 100
-clustering_type = "per_scenario"
-distance = "CosineDist"
-blended = false
-learning_rate = 0.01
-max_iter = 1000
-use_periods = false
-tol = 0.00001
+dir = "output_1900_"
 
 [input.sets]
-scenarios = ["1982", "1987", "1992", "1995", "1997", "2002", "2008", "2009", "2012"]
+scenarios = ["1900", "1992"]
 locations = "auto"
 generators = "auto"
-time_steps = "1:720"
+periods = "1:10"
 transmission_lines = "auto"
+period_duration = 24
+inter_period = false
+
+[input.rp]
+number_of_periods = 10
+clustering_type = "cross_scenario"
+method = "conical_unbounded"
+distance = "SqEuclidean"
+use_periods = true
+blended = false
 
 [input.data]
 transmission_lines = "transmission_lines.csv"
@@ -34,4 +32,7 @@ scalars = "scalars.toml"
 demand = "demand.csv"
 generation_availability = "generation_availability.csv"
 dir = "inputs"
+seed = "seeds.json"
 
+[input.fixed]
+fixed_run = false
