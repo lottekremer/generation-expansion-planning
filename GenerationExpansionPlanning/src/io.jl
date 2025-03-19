@@ -350,7 +350,6 @@ function create_representative_periods(config::Dict{Symbol,Any})::Dict{Symbol,An
 
         # Number of periods per scenario is found by dividing the number of periods by the number of scenarios
         num_periods = floor(Int, num_periods / length(scenarios))
-        println("Number of periods per scenario: $num_periods")
         demand_total = DataFrame()
         generation_total = DataFrame()
         weights_total = Vector{Float64}()
@@ -382,7 +381,6 @@ function create_representative_periods(config::Dict{Symbol,Any})::Dict{Symbol,An
         rp_config[:scenario_probabilities] = data_config[:scenario_probabilities]
 
         rp_config[:annualization] = 8760 / (length(sets_config[:time_steps]) * length(sets_config[:periods]))
-        println("annualization: $(rp_config[:annualization])")
 
     elseif rp_config[:clustering_type] == "cross_scenario" 
 
@@ -398,19 +396,22 @@ function create_representative_periods(config::Dict{Symbol,Any})::Dict{Symbol,An
         demand_temp[!, :scenario] .= Symbol.(["cross"])
         generation_temp[!, :scenario] .= Symbol.(["cross"])
 
+        # Manually add lower evenlope of periods
+        artificial_demand, artificial_generation = find_lower_envelope(demand_temp, generation_temp)
+
         # Cluster based on this data and name scenario column "cross"
         data, max_demand = process_data(demand_temp, generation_temp)
         rp = find_representative_periods(data, num_periods; method = method, distance = distance)
-        demand_res, generation_res, weights = process_rp(rp, max_demand, num_periods, config)
+        demand_res, generation_res, weights = process_rp(rp, max_demand, num_periods, config; artificial_demand, artificial_generation)
 
         # Add to config 
-        rp_config[:rep_periods] = 1:(num_periods)
+        rp_config[:rep_periods] = 1:(maximum(demand_res.rep_period))
         rp_config[:weights] = weights
         rp_config[:demand] = demand_res
         rp_config[:generation_availability] = generation_res
         rp_config[:scenarios] = Symbol.(["cross"])
         rp_config[:scenario_probabilities] = DataFrame(scenario = Symbol.(["cross"]), probability = [1.0])    
-        rp_config[:annualization] = 8760 / (length(sets_config[:time_steps]) * length(sets_config[:periods]))
+        rp_config[:annualization] = 8760 / (length(sets_config[:time_steps]) * sum(weights))
 
     else
         error("Invalid clustering type specified in the configuration.")
@@ -474,7 +475,9 @@ function process_data(demand_data::AbstractDataFrame, generation_availability_da
     return combined_data, max_demand
 end
 
-function process_rp(rp::TulipaClustering.ClusteringResult, max_demand::DataFrame, num_periods::Int, config::Dict{Symbol,Any})::Tuple{DataFrame, DataFrame, Vector{Float64}}
+function process_rp(rp::TulipaClustering.ClusteringResult, max_demand::DataFrame, num_periods::Int, 
+    config::Dict{Symbol,Any}; artificial_demand::DataFrame=DataFrame(), artificial_generation::DataFrame=DataFrame())::Tuple{DataFrame, DataFrame, Vector{Float64}}
+
     rp_config = config[:input][:rp]
     sets_config = config[:input][:sets]
     data_config = config[:input][:data]
@@ -494,6 +497,11 @@ function process_rp(rp::TulipaClustering.ClusteringResult, max_demand::DataFrame
 
         fit_rep_period_weights!(rp; weight_type = weight_type, tol = tolerance, learning_rate = lr, niters = iter, adaptive_grad = false)
     end
+
+    # If we asked for a convex hull, calculate how many points are inside the hull
+    # if rp_config[:method] == "convex_hull"
+    #     ratio = calculate_convex_hull(rp)
+    # end
 
     # Split demand and generation data
     split_values = split.(rp.profiles.profile_name, "_")
@@ -522,7 +530,7 @@ function process_rp(rp::TulipaClustering.ClusteringResult, max_demand::DataFrame
     demand_res = leftjoin(demand_res, max_demand, on=:location)
     demand_res[!, :demand] .*= demand_res.max_demand
     select!(demand_res, Not(:max_demand))
-    
+
     # Add period weights
     total_periods = length(sets_config[:periods])
     if rp_config[:clustering_type] == "cross_scenario"
@@ -548,6 +556,23 @@ function process_rp(rp::TulipaClustering.ClusteringResult, max_demand::DataFrame
         # If weigths are not convex, normalize them
         total_weights = sum(weights)
         weights = weights ./ (total_weights / total_periods)
+    end
+
+    # Add artificial periods if they exist
+    if !isempty(artificial_demand)
+        # Rename
+        rename!(artificial_demand, :period => :rep_period)
+        rename!(artificial_generation, :period => :rep_period)
+
+        # Get correct rep_period
+        artificial_demand[!, :rep_period] .+= maximum(demand_res.rep_period)
+        artificial_generation[!, :rep_period] .+= maximum(generation_res.rep_period)
+        append!(demand_res, artificial_demand)
+        append!(generation_res, artificial_generation)
+        append!(weights, 1.0)
+        # append!(weights, 1.0)
+        # append!(weights, 1.0)
+        # append!(weights, 1.0)
     end
 
     return demand_res, generation_res, weights
@@ -610,4 +635,128 @@ function add_to_name(dir::String, config::Dict{Symbol, Any})::String
     dir *= addon
 
     return dir
+end
+
+function find_lower_envelope(demand::DataFrame, generation::DataFrame)::Tuple{DataFrame, DataFrame}
+    # For each generation technology, we construct a lower envelope which becomes a new period (each of the the time steps)\
+    generation_new = DataFrame()
+    demand_new = DataFrame()
+
+    for timestep in unique(generation.timestep)
+        for location in unique(generation.location)
+            max_demand = maximum(filter(row -> row.location == location && row.timestep == timestep, demand).demand)
+            
+            for tech in unique(generation.technology)
+                tech_data = filter(row -> row.technology == tech && row.timestep == timestep && row.location == location, generation)
+                demand_data = filter(row -> row.location == location && row.timestep == timestep, demand)
+                
+                # Sort both datasets based on `period`
+                sorted_tech_data = sort(tech_data, :period)
+                sorted_demand_data = sort(demand_data, :period)
+
+                # Ensure the periods match before dividing
+                if sorted_tech_data.period == sorted_demand_data.period
+                    min_ratio = minimum(sorted_tech_data.availability ./ sorted_demand_data.demand)
+                else
+                    error("Periods do not match between tech_data and demand_data after sorting.")
+                end
+
+                min_availability = min_ratio * max_demand
+
+                new_row = DataFrame(location = location, period = 1, timestep = timestep, technology = tech, availability = min_availability, scenario = Symbol("cross"))
+                append!(generation_new, new_row)
+            end
+            append!(demand_new, DataFrame(location = location, period = 1, timestep = timestep, demand = max_demand, scenario = Symbol("cross")))
+        end
+    end
+
+    return demand_new, generation_new
+end
+
+# function find_lower_envelope(demand::DataFrame, generation::DataFrame)::Tuple{DataFrame, DataFrame}
+#     # For each generation technology, we construct a lower envelope which becomes a new period (each of the the time steps)\
+#     generation_new = DataFrame()
+#     demand_new = DataFrame()
+
+#     global counter = 0
+
+#     for tech in unique(generation.technology)
+#         global counter += 1
+#         for timestep in unique(generation.timestep)
+#             for location in unique(generation.location)
+#                 tech_data = filter(row -> row.technology == tech && row.timestep == timestep && row.location == location, generation)
+#                 min_availability = minimum(tech_data.availability)
+#                 min_period = tech_data[tech_data.availability .== min_availability, :period][1]
+#                 for other_tech in unique(generation.technology)
+#                     if other_tech != tech
+#                         min_other_availability = filter(row -> row.technology == other_tech && row.timestep == timestep && row.location == location && row.period == min_period, generation).availability[1]
+#                         new_row = DataFrame(location = location, period = counter, timestep = timestep, technology = other_tech, availability = min_other_availability, scenario = Symbol("cross"))
+#                         append!(generation_new, new_row)
+#                     end
+#                 end
+#                 min_demand = filter(row -> row.location == location && row.timestep == timestep && row.period == min_period, demand).demand[1]
+#                 new_row = DataFrame(location = location, period = counter, timestep = timestep, demand = min_demand, scenario = Symbol("cross"))
+#                 append!(demand_new, new_row)
+
+#                 new_row = DataFrame(location = location, period = counter, timestep = timestep, technology = tech, availability = min_availability, scenario = Symbol("cross"))
+#                 append!(generation_new, new_row)
+#             end
+#         end
+#     end
+
+#     # For each location and timestep, find the highest demand and add it as a new period
+#     for location in unique(demand.location)
+#         for timestep in unique(demand.timestep)
+#             max_demand = maximum(filter(row -> row.location == location && row.timestep == timestep, demand).demand)
+#             max_period = filter(row -> row.location == location && row.timestep == timestep && row.demand == max_demand, demand).period[1]
+            
+#             new_row = DataFrame(location = location, period = counter + 1, timestep = timestep, demand = max_demand, scenario = Symbol("cross"))
+#             append!(demand_new, new_row)
+            
+#             for tech in unique(generation.technology)
+#                 max_availability = filter(row -> row.location == location && row.timestep == timestep && row.period == max_period && row.technology == tech, generation).availability[1]
+#                 new_row = DataFrame(location = location, period = counter + 1, timestep = timestep, technology = tech, availability = max_availability, scenario = Symbol("cross"))
+#                 append!(generation_new, new_row)
+#             end
+#         end
+#     end
+
+#     return demand_new, generation_new
+# end
+
+function calculate_convex_hull(rp::TulipaClustering.ClusteringResult)::Float64
+    hull_points = rp.rp_matrix
+    all_points = rp.clustering_matrix
+    ratio = 0   
+    for i in axes(all_points, 2)
+        if in_hull(hull_points, all_points[:, i])
+            ratio += 1
+        end
+    end
+    ratio /= size(all_points, 1)
+    return ratio
+end
+
+
+function in_hull(points::Matrix{Float64}, x::AbstractArray)::Bool
+    n_points = size(points, 2)
+    n_dim = length(x)
+
+    # Set up the linear program
+    model = Model(Gurobi.Optimizer)
+    set_silent(model)  
+
+    @variable(model, λ[1:n_points] >= 0)
+    
+    for i in 1:n_dim
+        @constraint(model, sum(points[i, j] * λ[j] for j in 1:n_points) == x[i])
+    end
+
+    @constraint(model, sum(λ) == 1)
+
+    @objective(model, Min, 0)
+
+    optimize!(model)
+
+    return termination_status(model) == MOI.OPTIMAL
 end

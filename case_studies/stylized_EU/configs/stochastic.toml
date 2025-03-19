@@ -14,7 +14,6 @@ generators = "auto"
 periods = "1:10"
 transmission_lines = "auto"
 period_duration = 24
-inter_period = false
 
 [input.rp]
 number_of_periods = 10

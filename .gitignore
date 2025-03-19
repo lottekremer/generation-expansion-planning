@@ -32,5 +32,5 @@ case_studies/scripts/availability_data/*
 case_studies/scripts/ENTSO-E/*
 case_studies/stylized_EU/inputs/*
 case_studies/stylized_EU/res/*
-case_studies/stylized_EU/configs/output/*
+case_studies/stylized_EU/configs/*
 case_studies/optimality/*
