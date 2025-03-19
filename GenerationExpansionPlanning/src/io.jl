@@ -22,6 +22,17 @@ function keys_to_symbols(
                 for (k, v) in dict
     )
 end
+
+"""
+    string_to_symbols!(df::DataFrame)
+
+Convert all string columns in the DataFrame `df` to symbols. This is useful for
+ensuring that string data can be used as symbols in further processing.
+"""
+function string_to_symbols!(df::DataFrame)
+    string_columns = findall(col -> eltype(col) <: AbstractString, eachcol(df))
+    df[!, string_columns] = Symbol.(df[!, string_columns])
+end
     
 """
     read_config(config_path::AbstractString)::Dict{Symbol,Any}
@@ -47,7 +58,6 @@ function read_config(config_path::AbstractString)::Dict{Symbol,Any}
     # Remove the directory entry as it has been added to the file paths
     delete!(data_config, :dir)
 
-
     # Read the dataframes from files
     function read_file!(path::AbstractString, key::Symbol, format::Symbol)
         if format ≡ :CSV
@@ -58,8 +68,7 @@ function read_config(config_path::AbstractString)::Dict{Symbol,Any}
                 data_config[key][!, :scenario] = convert(Vector{String}, string.(data_config[key][!, :scenario]))
             end
 
-            string_columns = findall(col -> eltype(col) <: AbstractString, eachcol(data_config[key]))
-            data_config[key][!, string_columns] = Symbol.(data_config[key][!, string_columns])
+            string_to_symbols!(data_config[key])
 
         elseif format ≡ :TOML
             data_config[key] = (path, data_config[key]) |> joinpath |> TOML.parsefile |> keys_to_symbols
@@ -84,7 +93,6 @@ function read_config(config_path::AbstractString)::Dict{Symbol,Any}
         sets_config[:scenarios] = data_config[:demand].scenario ∪ data_config[:generation_availability].scenario
     else
         sets_config[:scenarios] = Symbol.(sets_config[:scenarios])
-        # Process data to only include the scenarios that are in the sets
         data_config[:demand] = filter(row -> row.scenario in sets_config[:scenarios], data_config[:demand])
         data_config[:generation_availability] = filter(row -> row.scenario in sets_config[:scenarios], data_config[:generation_availability])
     end
@@ -222,6 +230,12 @@ function jump_variable_to_df(variable::AbstractArray{T,N};
     return df
 end
 
+
+"""
+Save the given result object to the output directory defined in the config. If representative periods are used, information is saved for a seconf run with fixed investment. 
+For the first run, "/initial_run" is added to the directory, for the second run, "/fixed" is added. If a test run is done, the directory is added with "/test".
+"""
+
 function save_result(result::ExperimentResult, config::Dict{Symbol,Any}, time::Float64; fixed_investment::Bool=false)
     config_output = config[:output]
     dir = config_output[:dir]
@@ -230,16 +244,15 @@ function save_result(result::ExperimentResult, config::Dict{Symbol,Any}, time::F
 
         dir = add_to_name(dir, config)
 
-        # Add the fixed investment information for the second run
-        config[:input][:fixed] = Dict()
-        config[:input][:fixed][:investment] = result.investment
-        config[:input][:fixed][:total_investment_cost] = result.total_investment_cost
-        config[:input][:fixed][:generators] = Tuple.(map(collect, zip(config[:input][:fixed][:investment].location, config[:input][:fixed][:investment].technology)))
-        config[:input][:fixed][:generation_technologies] = unique([g[2] for g ∈ config[:input][:fixed][:generators]])
-
         # See if it is first or second run
         if !fixed_investment
             dir = joinpath(dir, "initial_run")
+
+            config[:input][:fixed] = Dict()
+            config[:input][:fixed][:investment] = result.investment
+            config[:input][:fixed][:total_investment_cost] = result.total_investment_cost
+            config[:input][:fixed][:generators] = Tuple.(map(collect, zip(config[:input][:fixed][:investment].location, config[:input][:fixed][:investment].technology)))
+            config[:input][:fixed][:generation_technologies] = unique([g[2] for g ∈ config[:input][:fixed][:generators]])
         else
             dir = joinpath(dir, "fixed")
         end
@@ -289,7 +302,6 @@ function create_representative_periods(config::Dict{Symbol,Any})::Dict{Symbol,An
     rp_config = config[:input][:rp]
 
     # Parameters that will be reused a lot
-    period_duration = sets_config[:period_duration]
     num_periods = rp_config[:number_of_periods]
     scenarios = sets_config[:scenarios]
 
@@ -321,6 +333,9 @@ function create_representative_periods(config::Dict{Symbol,Any})::Dict{Symbol,An
         error("Invalid distance type specified in the config.")
     end
 
+    rp_config[:scenarios] = scenarios
+    rp_config[:scenario_probabilities] = data_config[:scenario_probabilities]
+
     # Per clustering type, different actions are taken
     if rp_config[:clustering_type] == "group_scenario"
 
@@ -332,19 +347,7 @@ function create_representative_periods(config::Dict{Symbol,Any})::Dict{Symbol,An
 
         # Find representative periods and process the results
         rp = find_representative_periods(data, num_periods; method = method, distance = distance)
-        demand_res, generation_res, weights = process_rp(rp, max_demand, num_periods, config)
-
-        # Save the necessary information
-        rp_config[:rep_periods] = 1:num_periods
-        rp_config[:weights] = weights
-        rp_config[:demand] = demand_res
-        rp_config[:generation_availability] = generation_res
-        rp_config[:scenarios] = scenarios
-        rp_config[:scenario_probabilities] = data_config[:scenario_probabilities]
-
-        rp_config[:annualization] = 8760 / (length(sets_config[:time_steps]) * length(sets_config[:periods]))
-
-
+        demand_total, generation_total, weights_total = process_rp(rp, max_demand, num_periods, config)
     
     elseif rp_config[:clustering_type] == "per_scenario"
 
@@ -372,16 +375,6 @@ function create_representative_periods(config::Dict{Symbol,Any})::Dict{Symbol,An
             append!(weights_total, weights)
         end
 
-        # Save the necessary information
-        rp_config[:rep_periods] = 1:(num_periods * length(scenarios))
-        rp_config[:weights] = weights_total
-        rp_config[:demand] = demand_total
-        rp_config[:generation_availability] = generation_total
-        rp_config[:scenarios] = scenarios
-        rp_config[:scenario_probabilities] = data_config[:scenario_probabilities]
-
-        rp_config[:annualization] = 8760 / (length(sets_config[:time_steps]) * length(sets_config[:periods]))
-
     elseif rp_config[:clustering_type] == "cross_scenario" 
 
         # To create a cross scenario clustering, each scenario is treated as a new set of days, so all data is concatenated and the period is adjusted
@@ -397,49 +390,44 @@ function create_representative_periods(config::Dict{Symbol,Any})::Dict{Symbol,An
         generation_temp[!, :scenario] .= Symbol.(["cross"])
 
         # Manually add lower evenlope of periods
-        artificial_demand, artificial_generation = find_lower_envelope(demand_temp, generation_temp)
+        artificial_demand, artificial_generation = find_lower_envelope_two(demand_temp, generation_temp)
+        # artificial_demand, artificial_generation = find_lower_envelope_one(demand_temp, generation_temp)
 
         # Cluster based on this data and name scenario column "cross"
         data, max_demand = process_data(demand_temp, generation_temp)
         rp = find_representative_periods(data, num_periods; method = method, distance = distance)
-        demand_res, generation_res, weights = process_rp(rp, max_demand, num_periods, config; artificial_demand, artificial_generation)
+        demand_total, generation_total, weights_total = process_rp(rp, max_demand, num_periods, config; artificial_demand, artificial_generation)
 
         # Add to config 
-        rp_config[:rep_periods] = 1:(maximum(demand_res.rep_period))
-        rp_config[:weights] = weights
-        rp_config[:demand] = demand_res
-        rp_config[:generation_availability] = generation_res
         rp_config[:scenarios] = Symbol.(["cross"])
         rp_config[:scenario_probabilities] = DataFrame(scenario = Symbol.(["cross"]), probability = [1.0])    
-        rp_config[:annualization] = 8760 / (length(sets_config[:time_steps]) * sum(weights))
-
     else
         error("Invalid clustering type specified in the configuration.")
     end
 
-    # Make sure that columns are still symbols
-    string_columns_demand = findall(col -> eltype(col) <: AbstractString, eachcol(rp_config[:demand]))
-    rp_config[:demand][!, string_columns_demand] = Symbol.(rp_config[:demand][!, string_columns_demand])
-    string_columns_generation = findall(col -> eltype(col) <: AbstractString, eachcol(rp_config[:generation_availability]))
-    rp_config[:generation_availability][!, string_columns_generation] = Symbol.(rp_config[:generation_availability][!, string_columns_generation])
+    # Save the necessary information
+    rp_config[:rep_periods] = 1:(maximum(demand_total.rep_period))
+    rp_config[:weights] = weights_total
+    rp_config[:demand] = demand_total
+    rp_config[:generation_availability] = generation_total
+    rp_config[:annualization] = 365 / sum(weights_total)
 
-    # Set periods_per_scenario to be a list of unique tuples with all combinations of rep_period and scenario in demand and correct the time_steps to be the periods length
+    # Make sure that columns are still symbols
+    string_to_symbols!(rp_config[:demand])
+    string_to_symbols!(rp_config[:generation_availability])
+
+    # Set periods_per_scenario to be a list of unique tuples with all combinations of rep_period and scenario in demand
     rp_config[:rep_periods_per_scenario] = unique(Tuple.(map(collect, zip(rp_config[:demand].rep_period, rp_config[:demand].scenario))))
+
     return config
 end
 
+"""
+Process the data by normalizing it and combining it into one DataFrame. The maximum demand per location is stored and returned.
+"""
 function process_data(demand_data::AbstractDataFrame, generation_availability_data::AbstractDataFrame)::Tuple{DataFrame, DataFrame}
 
-    # Scale the demand data so that it is a value between 0 and 1 but store the max, do this per location in demand
-    max_demand = combine(groupby(demand_data, :location), :demand => maximum => :max_demand)
-    max_demand_dict = Dict(row.location => row.max_demand for row in eachrow(max_demand))
-    demand_data[!, :demand] .= demand_data.demand ./ getindex.(Ref(max_demand_dict), demand_data.location)
-
-    # Scale generation availability data to A / D where D is the scaled demand
-    generation_availability_data = leftjoin(generation_availability_data, demand_data, 
-                                        on=[:location, :period, :timestep, :scenario])
-    generation_availability_data[!, :availability] .= generation_availability_data.availability ./ generation_availability_data.demand
-    select!(generation_availability_data, Not(:demand))
+    max_demand = normalize_data!(demand_data, generation_availability_data)
 
     # Combine the demand and availability data into one dataframe in which profile_name is location_technology/demand, then timestep then value
     demand_data[!, :profile_name] = string.(demand_data.location, "_demand")
@@ -475,109 +463,61 @@ function process_data(demand_data::AbstractDataFrame, generation_availability_da
     return combined_data, max_demand
 end
 
+"""
+Process the representative periods by adjusting the weights and splitting the data back into demand and generation data.
+"""
 function process_rp(rp::TulipaClustering.ClusteringResult, max_demand::DataFrame, num_periods::Int, 
     config::Dict{Symbol,Any}; artificial_demand::DataFrame=DataFrame(), artificial_generation::DataFrame=DataFrame())::Tuple{DataFrame, DataFrame, Vector{Float64}}
 
     rp_config = config[:input][:rp]
     sets_config = config[:input][:sets]
-    data_config = config[:input][:data]
 
     # If blended, we adjust the weights, this is currently not used in experiments
     if rp_config[:blended]
-        lr = rp_config[:learning_rate]
-        iter = rp_config[:max_iter]
-        tolerance = rp_config[:tol]
-        if rp_config[:method] == :conical_hull
-            weight_type = :conical
-        elseif rp_config[:method] == :convex_hull_with_null
-            weight_type = :conical_bounded
-        else
-            weight_type = :convex
-        end
-
-        fit_rep_period_weights!(rp; weight_type = weight_type, tol = tolerance, learning_rate = lr, niters = iter, adaptive_grad = false)
+        adjust_weights!(rp, rp_config)
     end
 
-    # If we asked for a convex hull, calculate how many points are inside the hull
-    # if rp_config[:method] == "convex_hull"
-    #     ratio = calculate_convex_hull(rp)
-    # end
-
     # Split demand and generation data
-    split_values = split.(rp.profiles.profile_name, "_")
-    rp.profiles[!, :location] = getindex.(split_values, 1)
-    rp.profiles[!, :technology] = getindex.(split_values, 2)
-
-    # Get correct demand dataframes
-    demand_res = filter(row -> row.technology == "demand", rp.profiles)
-    generation_res = filter(row -> row.technology != "demand", rp.profiles)
-    rename!(demand_res, :value => :demand)
-    rename!(generation_res, :value => :availability)
-    demand_res = select(demand_res, Not([:technology, :profile_name]))
-    
-    # Get symbols
-    string_columns_demand_res = findall(col -> eltype(col) <: AbstractString, eachcol(demand_res))
-    string_columns_availability_res = findall(col -> eltype(col) <: AbstractString, eachcol(generation_res))
-    demand_res[!, string_columns_demand_res] = Symbol.(demand_res[!, string_columns_demand_res])
-    generation_res[!, string_columns_availability_res] = Symbol.(generation_res[!, string_columns_availability_res])
-
-    # Create a demand lookup table (excluding unnecessary columns early for efficiency)
-    generation_res = leftjoin(generation_res, demand_res, on=[:rep_period, :location, :timestep, :scenario])
-    generation_res[!, :availability] .*= generation_res.demand
-    select!(generation_res, Not([:demand, :profile_name]))
-    
-    # Efficiently assign max_demand values based on location (avoiding per-row loops)
-    demand_res = leftjoin(demand_res, max_demand, on=:location)
-    demand_res[!, :demand] .*= demand_res.max_demand
-    select!(demand_res, Not(:max_demand))
+    demand_res, generation_res = get_original_dataframes(rp)
+    denormalize_data!(demand_res, generation_res, max_demand)
 
     # Add period weights
     total_periods = length(sets_config[:periods])
-    if rp_config[:clustering_type] == "cross_scenario"
-        start = 1
-        finish = total_periods
-        unique_scenarios = sets_config[:scenarios]
-        scenario_prob = data_config[:scenario_probabilities]
 
-        for s in unique_scenarios
+    if rp_config[:clustering_type] == "cross_scenario"
+        start = 1 # If we are going to add artificial periods earlier on, we need to adjust this
+        finish = total_periods
+        scenario_prob = config[:input][:data][:scenario_probabilities]
+        for s in sets_config[:scenarios]
             row_index = findfirst(row -> row == s, scenario_prob.scenario)
             rp.weight_matrix[start:finish, :] *= scenario_prob[row_index, :probability]
             start += total_periods
             finish += total_periods
         end
-
-        weights = [sum(rp.weight_matrix[:, col]) for col in 1:num_periods]
-        total_weights = sum(weights)
-        weights = weights ./ (total_weights / total_periods)
-
-    else
-        weights = [sum(rp.weight_matrix[:, col]) for col in 1:num_periods]
-
-        # If weigths are not convex, normalize them
-        total_weights = sum(weights)
-        weights = weights ./ (total_weights / total_periods)
     end
+
+    weights = [sum(rp.weight_matrix[:, col]) for col in 1:num_periods]
 
     # Add artificial periods if they exist
     if !isempty(artificial_demand)
-        # Rename
-        rename!(artificial_demand, :period => :rep_period)
-        rename!(artificial_generation, :period => :rep_period)
-
-        # Get correct rep_period
         artificial_demand[!, :rep_period] .+= maximum(demand_res.rep_period)
         artificial_generation[!, :rep_period] .+= maximum(generation_res.rep_period)
         append!(demand_res, artificial_demand)
         append!(generation_res, artificial_generation)
-        append!(weights, 1.0)
-        # append!(weights, 1.0)
-        # append!(weights, 1.0)
-        # append!(weights, 1.0)
+        append!(weights, ones(Float64, maximum(artificial_demand.rep_period)))
     end
+
+    total_weights = sum(weights)
+    weights = weights ./ (total_weights / total_periods)
 
     return demand_res, generation_res, weights
 end
 
+"""
+Add fixed investments variables if it is given.
+It reads the fixed investment data from the specified directory and updates the 
+configuration dictionary with this information.
+"""
 function add_fixed_investment(config::Dict{Symbol,Any})::Dict{Symbol,Any}
     fixed = config[:input][:fixed]
     dir = fixed[:dir]
@@ -585,8 +525,7 @@ function add_fixed_investment(config::Dict{Symbol,Any})::Dict{Symbol,Any}
     full_path = joinpath(current_dir, dir)
 
     fixed[:investment] = (full_path, fixed[:investment]) |> joinpath |> CSV.File |> DataFrame
-    string_columns = findall(col -> eltype(col) <: AbstractString, eachcol(fixed[:investment]))
-    fixed[:investment][!, string_columns] = Symbol.(fixed[:investment][!, string_columns])
+    string_to_symbols!(fixed[:investment])
 
     fixed[:total_investment_cost] = (full_path, fixed[:total_investment_cost] )|> joinpath |> TOML.parsefile |> keys_to_symbols
     fixed[:total_investment_cost] = fixed[:total_investment_cost][:total_investment_cost]
@@ -596,6 +535,9 @@ function add_fixed_investment(config::Dict{Symbol,Any})::Dict{Symbol,Any}
     return config
 end
 
+"""
+Add parts to the name of the output directory.
+"""
 function add_to_name(dir::String, config::Dict{Symbol, Any})::String
     rp_config = config[:input][:rp]
     data_config = config[:input][:data]
@@ -637,7 +579,7 @@ function add_to_name(dir::String, config::Dict{Symbol, Any})::String
     return dir
 end
 
-function find_lower_envelope(demand::DataFrame, generation::DataFrame)::Tuple{DataFrame, DataFrame}
+function find_lower_envelope_two(demand::DataFrame, generation::DataFrame)::Tuple{DataFrame, DataFrame}
     # For each generation technology, we construct a lower envelope which becomes a new period (each of the the time steps)\
     generation_new = DataFrame()
     demand_new = DataFrame()
@@ -670,59 +612,65 @@ function find_lower_envelope(demand::DataFrame, generation::DataFrame)::Tuple{Da
         end
     end
 
+    rename!(demand_new, :period => :rep_period)
+    rename!(generation_new, :period => :rep_period)
+
     return demand_new, generation_new
 end
 
-# function find_lower_envelope(demand::DataFrame, generation::DataFrame)::Tuple{DataFrame, DataFrame}
-#     # For each generation technology, we construct a lower envelope which becomes a new period (each of the the time steps)\
-#     generation_new = DataFrame()
-#     demand_new = DataFrame()
+function find_lower_envelope_one(demand::DataFrame, generation::DataFrame)::Tuple{DataFrame, DataFrame}
+    # For each generation technology, we construct a lower envelope which becomes a new period (each of the the time steps)\
+    generation_new = DataFrame()
+    demand_new = DataFrame()
 
-#     global counter = 0
+    global counter = 0
 
-#     for tech in unique(generation.technology)
-#         global counter += 1
-#         for timestep in unique(generation.timestep)
-#             for location in unique(generation.location)
-#                 tech_data = filter(row -> row.technology == tech && row.timestep == timestep && row.location == location, generation)
-#                 min_availability = minimum(tech_data.availability)
-#                 min_period = tech_data[tech_data.availability .== min_availability, :period][1]
-#                 for other_tech in unique(generation.technology)
-#                     if other_tech != tech
-#                         min_other_availability = filter(row -> row.technology == other_tech && row.timestep == timestep && row.location == location && row.period == min_period, generation).availability[1]
-#                         new_row = DataFrame(location = location, period = counter, timestep = timestep, technology = other_tech, availability = min_other_availability, scenario = Symbol("cross"))
-#                         append!(generation_new, new_row)
-#                     end
-#                 end
-#                 min_demand = filter(row -> row.location == location && row.timestep == timestep && row.period == min_period, demand).demand[1]
-#                 new_row = DataFrame(location = location, period = counter, timestep = timestep, demand = min_demand, scenario = Symbol("cross"))
-#                 append!(demand_new, new_row)
+    for tech in unique(generation.technology)
+        global counter += 1
+        for timestep in unique(generation.timestep)
+            for location in unique(generation.location)
+                tech_data = filter(row -> row.technology == tech && row.timestep == timestep && row.location == location, generation)
+                min_availability = minimum(tech_data.availability)
+                min_period = tech_data[tech_data.availability .== min_availability, :period][1]
+                for other_tech in unique(generation.technology)
+                    if other_tech != tech
+                        min_other_availability = filter(row -> row.technology == other_tech && row.timestep == timestep && row.location == location && row.period == min_period, generation).availability[1]
+                        new_row = DataFrame(location = location, period = counter, timestep = timestep, technology = other_tech, availability = min_other_availability, scenario = Symbol("cross"))
+                        append!(generation_new, new_row)
+                    end
+                end
+                min_demand = filter(row -> row.location == location && row.timestep == timestep && row.period == min_period, demand).demand[1]
+                new_row = DataFrame(location = location, period = counter, timestep = timestep, demand = min_demand, scenario = Symbol("cross"))
+                append!(demand_new, new_row)
 
-#                 new_row = DataFrame(location = location, period = counter, timestep = timestep, technology = tech, availability = min_availability, scenario = Symbol("cross"))
-#                 append!(generation_new, new_row)
-#             end
-#         end
-#     end
+                new_row = DataFrame(location = location, period = counter, timestep = timestep, technology = tech, availability = min_availability, scenario = Symbol("cross"))
+                append!(generation_new, new_row)
+            end
+        end
+    end
 
-#     # For each location and timestep, find the highest demand and add it as a new period
-#     for location in unique(demand.location)
-#         for timestep in unique(demand.timestep)
-#             max_demand = maximum(filter(row -> row.location == location && row.timestep == timestep, demand).demand)
-#             max_period = filter(row -> row.location == location && row.timestep == timestep && row.demand == max_demand, demand).period[1]
+    # For each location and timestep, find the highest demand and add it as a new period
+    for location in unique(demand.location)
+        for timestep in unique(demand.timestep)
+            max_demand = maximum(filter(row -> row.location == location && row.timestep == timestep, demand).demand)
+            max_period = filter(row -> row.location == location && row.timestep == timestep && row.demand == max_demand, demand).period[1]
             
-#             new_row = DataFrame(location = location, period = counter + 1, timestep = timestep, demand = max_demand, scenario = Symbol("cross"))
-#             append!(demand_new, new_row)
+            new_row = DataFrame(location = location, period = counter + 1, timestep = timestep, demand = max_demand, scenario = Symbol("cross"))
+            append!(demand_new, new_row)
             
-#             for tech in unique(generation.technology)
-#                 max_availability = filter(row -> row.location == location && row.timestep == timestep && row.period == max_period && row.technology == tech, generation).availability[1]
-#                 new_row = DataFrame(location = location, period = counter + 1, timestep = timestep, technology = tech, availability = max_availability, scenario = Symbol("cross"))
-#                 append!(generation_new, new_row)
-#             end
-#         end
-#     end
+            for tech in unique(generation.technology)
+                max_availability = filter(row -> row.location == location && row.timestep == timestep && row.period == max_period && row.technology == tech, generation).availability[1]
+                new_row = DataFrame(location = location, period = counter + 1, timestep = timestep, technology = tech, availability = max_availability, scenario = Symbol("cross"))
+                append!(generation_new, new_row)
+            end
+        end
+    end
 
-#     return demand_new, generation_new
-# end
+    rename!(demand_new, :period => :rep_period)
+    rename!(generation_new, :period => :rep_period)
+
+    return demand_new, generation_new
+end
 
 function calculate_convex_hull(rp::TulipaClustering.ClusteringResult)::Float64
     hull_points = rp.rp_matrix
@@ -759,4 +707,79 @@ function in_hull(points::Matrix{Float64}, x::AbstractArray)::Bool
     optimize!(model)
 
     return termination_status(model) == MOI.OPTIMAL
+end
+
+"""
+Normalizes the demand data based on the maximum demand per location and normalizes the availability data by dividing it by the demand.
+"""
+function normalize_data!(demand_data::DataFrame, generation_availability_data::DataFrame)::DataFrame
+    # Scale the demand data so that it is a value between 0 and 1 but store the max, do this per location in demand
+    max_demand = combine(groupby(demand_data, :location), :demand => maximum => :max_demand)
+    max_demand_dict = Dict(row.location => row.max_demand for row in eachrow(max_demand))
+    demand_data[!, :demand] .= demand_data.demand ./ getindex.(Ref(max_demand_dict), demand_data.location)
+    
+    # Scale generation availability data to A / D where D is the scaled demand
+    generation_availability_data = leftjoin(generation_availability_data, demand_data, 
+                                            on=[:location, :period, :timestep, :scenario])
+    generation_availability_data[!, :availability] .= generation_availability_data.availability ./ generation_availability_data.demand
+    select!(generation_availability_data, Not(:demand))
+
+    return max_demand
+end
+
+"""
+Denormalizes the data in `demand_res` and `generation_res` DataFrames using the maximum demand values stored in `max_demand`.
+This function reverses the normalization process applied by `normalize_data!`.
+"""
+function denormalize_data!(demand_res::DataFrame, generation_res::DataFrame, max_demand::DataFrame)
+    # Multiply generation data with demand data
+    generation_res = leftjoin(generation_res, demand_res, on=[:rep_period, :location, :timestep, :scenario])
+    generation_res[!, :availability] .*= generation_res.demand
+    select!(generation_res, Not(:demand))
+    
+    # Multiply the demand back with the max demand to get the original demand
+    demand_res = leftjoin(demand_res, max_demand, on=:location)
+    demand_res[!, :demand] .*= demand_res.max_demand
+    select!(demand_res, Not(:max_demand))
+end
+
+"""
+Adjusts the weights of the representative periods using a blended approach.
+"""
+function adjust_weights!(rp::TulipaClustering.ClusteringResult, rp_config::Dict{Symbol,Any})
+    # Parameters
+    lr = rp_config[:learning_rate]
+    iter = rp_config[:max_iter]
+    tolerance = rp_config[:tol]
+
+    # Method
+    if rp_config[:method] == :conical_hull
+        weight_type = :conical
+    elseif rp_config[:method] == :convex_hull_with_null
+        weight_type = :conical_bounded
+    else
+        weight_type = :convex
+    end
+
+    # Using function from TulipaClustering
+    fit_rep_period_weights!(rp; weight_type = weight_type, tol = tolerance, learning_rate = lr, niters = iter, adaptive_grad = false)
+end
+
+"""
+Splits the profiles from Tulipaclustering into their original dataframes.
+"""
+function get_original_dataframes(rp::TulipaClustering.ClusteringResult)::Tuple{DataFrame, DataFrame}
+    split_profiles = split.(rp.profiles.profile_name, "_")
+    rp.profiles[!, :location] = getindex.(split_profiles, 1)
+    rp.profiles[!, :technology] = getindex.(split_profiles, 2)
+    demand_res = filter(row -> row.technology == "demand", rp.profiles)
+    generation_res = filter(row -> row.technology != "demand", rp.profiles)
+    rename!(demand_res, :value => :demand)
+    rename!(generation_res, :value => :availability)
+    select!(demand_res, Not([:technology, :profile_name]))
+    select!(generation_res, Not(:profile_name))
+    string_to_symbols!(demand_res)
+    string_to_symbols!(generation_res)
+
+    return demand_res, generation_res
 end
