@@ -281,6 +281,12 @@ function save_result(result::ExperimentResult, config::Dict{Symbol,Any}, time::F
     save_dataframe(result.loss_of_load, config_output[:loss_of_load])
     save_dataframe(result.operational_cost_per_scenario, config_output[:operational_cost_per_scenario])
 
+    if haskey(config[:input],:rp) && config[:input][:rp][:use_periods]
+        save_dataframe(config[:input][:rp][:demand], "rp_demand.csv")
+        save_dataframe(config[:input][:rp][:generation_availability], "rp_generation_availability.csv")
+        save_dataframe(config[:input][:rp][:weights_df], "rp_weights.csv")
+    end
+
     scalar_data = Dict(
         "total_cost" => round(result.total_cost, sigdigits=6),
         "total_investment_cost" => round(result.total_investment_cost, sigdigits=6),
@@ -390,8 +396,10 @@ function create_representative_periods(config::Dict{Symbol,Any})::Dict{Symbol,An
         generation_temp[!, :scenario] .= Symbol.(["cross"])
 
         # Manually add lower evenlope of periods
-        artificial_demand, artificial_generation = find_lower_envelope_two(demand_temp, generation_temp)
+        # artificial_demand, artificial_generation = find_lower_envelope_two(demand_temp, generation_temp)
         # artificial_demand, artificial_generation = find_lower_envelope_one(demand_temp, generation_temp)
+        artificial_demand = DataFrame() # Emtpy dataframes for now
+        artificial_generation = DataFrame() # Emtpy dataframes for now
 
         # Cluster based on this data and name scenario column "cross"
         data, max_demand = process_data(demand_temp, generation_temp)
@@ -410,7 +418,7 @@ function create_representative_periods(config::Dict{Symbol,Any})::Dict{Symbol,An
     rp_config[:weights] = weights_total
     rp_config[:demand] = demand_total
     rp_config[:generation_availability] = generation_total
-    rp_config[:annualization] = 365 / sum(weights_total)
+    rp_config[:annualization] = (365*24) / (sum(weights_total)*sets_config[:period_duration])
 
     # Make sure that columns are still symbols
     string_to_symbols!(rp_config[:demand])
@@ -427,7 +435,7 @@ Process the data by normalizing it and combining it into one DataFrame. The maxi
 """
 function process_data(demand_data::AbstractDataFrame, generation_availability_data::AbstractDataFrame)::Tuple{DataFrame, DataFrame}
 
-    max_demand = normalize_data!(demand_data, generation_availability_data)
+    demand_data, generation_availability_data, max_demand = normalize_data(demand_data, generation_availability_data)
 
     # Combine the demand and availability data into one dataframe in which profile_name is location_technology/demand, then timestep then value
     demand_data[!, :profile_name] = string.(demand_data.location, "_demand")
@@ -479,7 +487,8 @@ function process_rp(rp::TulipaClustering.ClusteringResult, max_demand::DataFrame
 
     # Split demand and generation data
     demand_res, generation_res = get_original_dataframes(rp)
-    denormalize_data!(demand_res, generation_res, max_demand)
+    demand_res, generation_res = denormalize_data(demand_res, generation_res, max_demand)
+
 
     # Add period weights
     total_periods = length(sets_config[:periods])
@@ -497,14 +506,22 @@ function process_rp(rp::TulipaClustering.ClusteringResult, max_demand::DataFrame
     end
 
     weights = [sum(rp.weight_matrix[:, col]) for col in 1:num_periods]
+    rp.weight_matrix = sparse(rp.weight_matrix)
+
+    # Create a weight dataframe with for each initial period the representative period it is assigned To
+    weights_df = DataFrame()
+    for period in 1:total_periods
+        append!(weights_df, DataFrame(period = period, rep_period = argmax(rp.weight_matrix[period, :])))
+    end
+    rp_config[:weights_df] = weights_df
 
     # Add artificial periods if they exist
     if !isempty(artificial_demand)
+        append!(weights, ones(Float64, maximum(artificial_demand.rep_period)))
         artificial_demand[!, :rep_period] .+= maximum(demand_res.rep_period)
         artificial_generation[!, :rep_period] .+= maximum(generation_res.rep_period)
         append!(demand_res, artificial_demand)
         append!(generation_res, artificial_generation)
-        append!(weights, ones(Float64, maximum(artificial_demand.rep_period)))
     end
 
     total_weights = sum(weights)
@@ -570,7 +587,7 @@ function add_to_name(dir::String, config::Dict{Symbol, Any})::String
     
     addon *= string(rp_config[:number_of_periods])
     
-    if haskey(data_config, :seed)
+    if haskey(data_config, :seed) && (rp_config[:method] == "k_means" || rp_config[:method] == "k_medoids")
         addon *= "/seed_$(data_config[:seed][string(rp_config[:number_of_periods])])"
     end
 
@@ -712,7 +729,7 @@ end
 """
 Normalizes the demand data based on the maximum demand per location and normalizes the availability data by dividing it by the demand.
 """
-function normalize_data!(demand_data::DataFrame, generation_availability_data::DataFrame)::DataFrame
+function normalize_data(demand_data::DataFrame, generation_availability_data::DataFrame)::Tuple{DataFrame, DataFrame, DataFrame}
     # Scale the demand data so that it is a value between 0 and 1 but store the max, do this per location in demand
     max_demand = combine(groupby(demand_data, :location), :demand => maximum => :max_demand)
     max_demand_dict = Dict(row.location => row.max_demand for row in eachrow(max_demand))
@@ -724,14 +741,14 @@ function normalize_data!(demand_data::DataFrame, generation_availability_data::D
     generation_availability_data[!, :availability] .= generation_availability_data.availability ./ generation_availability_data.demand
     select!(generation_availability_data, Not(:demand))
 
-    return max_demand
+    return demand_data, generation_availability_data, max_demand
 end
 
 """
 Denormalizes the data in `demand_res` and `generation_res` DataFrames using the maximum demand values stored in `max_demand`.
 This function reverses the normalization process applied by `normalize_data!`.
 """
-function denormalize_data!(demand_res::DataFrame, generation_res::DataFrame, max_demand::DataFrame)
+function denormalize_data(demand_res::DataFrame, generation_res::DataFrame, max_demand::DataFrame)::Tuple{DataFrame, DataFrame}
     # Multiply generation data with demand data
     generation_res = leftjoin(generation_res, demand_res, on=[:rep_period, :location, :timestep, :scenario])
     generation_res[!, :availability] .*= generation_res.demand
@@ -741,6 +758,8 @@ function denormalize_data!(demand_res::DataFrame, generation_res::DataFrame, max
     demand_res = leftjoin(demand_res, max_demand, on=:location)
     demand_res[!, :demand] .*= demand_res.max_demand
     select!(demand_res, Not(:max_demand))
+
+    return demand_res, generation_res
 end
 
 """
