@@ -1,13 +1,13 @@
 using GenerationExpansionPlanning
-using TulipaClustering
+using TulipaClustering # search how to do it from a local path
 using Gurobi
 using Profile
 
-config_folder = "case_studies/optimality/configs"
+config_folder = "case_studies/2d/configs"
 config_files = readdir(config_folder)
 
 for config_file in config_files
-    if endswith(config_file, ".toml") && startswith(config_file, "closemixed_1.toml")
+    if endswith(config_file, ".toml") && startswith(config_file, "start_")
         config_path = joinpath(config_folder, config_file)
         start_time = @elapsed begin
         @info "Reading config file $config_path"
