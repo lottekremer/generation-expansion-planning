@@ -451,6 +451,7 @@ function create_representative_periods(config::Dict{Symbol,Any})::Dict{Symbol,An
             num_periods -= length(initial_rp)
             rp = find_representative_periods(data, num_periods; method=method, distance=distance)
             demand_total, generation_total, weights_total = process_rp(rp, max_demand, num_periods, config; artificial_demand, artificial_generation)
+            num_periods += length(initial_rp)
         else
             rp = find_representative_periods(data, num_periods; method=method, distance=distance)
             demand_total, generation_total, weights_total = process_rp(rp, max_demand, num_periods, config)
@@ -462,6 +463,10 @@ function create_representative_periods(config::Dict{Symbol,Any})::Dict{Symbol,An
     else
         error("Invalid clustering type specified in the configuration.")
     end
+
+    # Create a weight dataframe
+    weights_df = DataFrame(rep_period=1:num_periods, weight=weights_total)
+    rp_config[:weights_df] = weights_df
 
     # Save the necessary information
     rp_config[:rep_periods] = 1:(maximum(demand_total.rep_period))
@@ -563,7 +568,9 @@ function process_rp(rp::TulipaClustering.ClusteringResult, max_demand::DataFrame
     # Add artificial periods if they exist
     if !isempty(artificial_demand)
         num_art = maximum(artificial_demand.rep_period)
-        append!(weights, ones(Float64, num_art))
+        value = sum(weights) / num_periods
+        append!(weights, fill(value, num_art))
+        # This should change with weights
         artificial_demand[!, :rep_period] .+= num_periods
         artificial_generation[!, :rep_period] .+= num_periods
         append!(demand_res, artificial_demand)
@@ -573,10 +580,6 @@ function process_rp(rp::TulipaClustering.ClusteringResult, max_demand::DataFrame
 
     total_weights = sum(weights)
     weights = weights ./ (total_weights / total_periods)
-
-    # Create a weight dataframe
-    weights_df = DataFrame(rep_period=1:num_periods, weight=weights)
-    rp_config[:weights_df] = weights_df
 
     return demand_res, generation_res, weights
 end
@@ -626,6 +629,8 @@ function add_to_name(dir::String, config::Dict{Symbol,Any})::String
         addon *= "kmd_"
     elseif rp_config[:method] == "convex_hull"
         addon *= "cvx_"
+    elseif rp_config[:method] == "conical_bounded"
+        addon *= "cb_"
     end
 
     if rp_config[:distance] == "SqEuclidean"
@@ -822,9 +827,9 @@ function adjust_weights!(rp::TulipaClustering.ClusteringResult, rp_config::Dict{
     tolerance = rp_config[:tol]
 
     # Method
-    if rp_config[:method] == :conical_hull
+    if rp_config[:method] == "conical_unbounded"
         weight_type = :conical
-    elseif rp_config[:method] == :convex_hull_with_null
+    elseif rp_config[:method] == "conical_bounded"
         weight_type = :conical_bounded
     else
         weight_type = :convex
