@@ -652,99 +652,6 @@ function add_to_name(dir::String, config::Dict{Symbol,Any})::String
     return dir
 end
 
-function find_lower_envelope_two(demand::DataFrame, generation::DataFrame)::Tuple{DataFrame,DataFrame}
-    # For each generation technology, we construct a lower envelope which becomes a new period (each of the the time steps)\
-    generation_new = DataFrame()
-    demand_new = DataFrame()
-
-    for timestep in unique(generation.timestep)
-        for location in unique(generation.location)
-            max_demand = maximum(filter(row -> row.location == location && row.timestep == timestep, demand).demand)
-
-            for tech in unique(generation.technology)
-                tech_data = filter(row -> row.technology == tech && row.timestep == timestep && row.location == location, generation)
-                demand_data = filter(row -> row.location == location && row.timestep == timestep, demand)
-
-                # Sort both datasets based on `period`
-                sorted_tech_data = sort(tech_data, :period)
-                sorted_demand_data = sort(demand_data, :period)
-
-                # Ensure the periods match before dividing
-                if sorted_tech_data.period == sorted_demand_data.period
-                    min_ratio = minimum(sorted_tech_data.availability ./ sorted_demand_data.demand)
-                else
-                    error("Periods do not match between tech_data and demand_data after sorting.")
-                end
-
-                min_availability = min_ratio * max_demand
-
-                new_row = DataFrame(location=location, period=1, timestep=timestep, technology=tech, availability=min_availability, scenario=Symbol("cross"))
-                append!(generation_new, new_row)
-            end
-            append!(demand_new, DataFrame(location=location, period=1, timestep=timestep, demand=max_demand, scenario=Symbol("cross")))
-        end
-    end
-
-    rename!(demand_new, :period => :rep_period)
-    rename!(generation_new, :period => :rep_period)
-
-    return demand_new, generation_new
-end
-
-function find_lower_envelope_one(demand::DataFrame, generation::DataFrame)::Tuple{DataFrame,DataFrame}
-    # For each generation technology, we construct a lower envelope which becomes a new period (each of the the time steps)\
-    generation_new = DataFrame()
-    demand_new = DataFrame()
-
-    global counter = 0
-
-    for tech in unique(generation.technology)
-        global counter += 1
-        for timestep in unique(generation.timestep)
-            for location in unique(generation.location)
-                tech_data = filter(row -> row.technology == tech && row.timestep == timestep && row.location == location, generation)
-                min_availability = minimum(tech_data.availability)
-                min_period = tech_data[tech_data.availability.==min_availability, :period][1]
-                for other_tech in unique(generation.technology)
-                    if other_tech != tech
-                        min_other_availability = filter(row -> row.technology == other_tech && row.timestep == timestep && row.location == location && row.period == min_period, generation).availability[1]
-                        new_row = DataFrame(location=location, period=counter, timestep=timestep, technology=other_tech, availability=min_other_availability, scenario=Symbol("cross"))
-                        append!(generation_new, new_row)
-                    end
-                end
-                min_demand = filter(row -> row.location == location && row.timestep == timestep && row.period == min_period, demand).demand[1]
-                new_row = DataFrame(location=location, period=counter, timestep=timestep, demand=min_demand, scenario=Symbol("cross"))
-                append!(demand_new, new_row)
-
-                new_row = DataFrame(location=location, period=counter, timestep=timestep, technology=tech, availability=min_availability, scenario=Symbol("cross"))
-                append!(generation_new, new_row)
-            end
-        end
-    end
-
-    # For each location and timestep, find the highest demand and add it as a new period
-    for location in unique(demand.location)
-        for timestep in unique(demand.timestep)
-            max_demand = maximum(filter(row -> row.location == location && row.timestep == timestep, demand).demand)
-            max_period = filter(row -> row.location == location && row.timestep == timestep && row.demand == max_demand, demand).period[1]
-
-            new_row = DataFrame(location=location, period=counter + 1, timestep=timestep, demand=max_demand, scenario=Symbol("cross"))
-            append!(demand_new, new_row)
-
-            for tech in unique(generation.technology)
-                max_availability = filter(row -> row.location == location && row.timestep == timestep && row.period == max_period && row.technology == tech, generation).availability[1]
-                new_row = DataFrame(location=location, period=counter + 1, timestep=timestep, technology=tech, availability=max_availability, scenario=Symbol("cross"))
-                append!(generation_new, new_row)
-            end
-        end
-    end
-
-    rename!(demand_new, :period => :rep_period)
-    rename!(generation_new, :period => :rep_period)
-
-    return demand_new, generation_new
-end
-
 function calculate_convex_hull(rp::TulipaClustering.ClusteringResult)::Float64
     hull_points = rp.rp_matrix
     all_points = rp.clustering_matrix
@@ -790,11 +697,11 @@ function normalize_data(demand_data::DataFrame, generation_availability_data::Da
     max_demand_dict = Dict(row.location => row.max_demand for row in eachrow(max_demand))
     demand_data[!, :demand] .= demand_data.demand ./ getindex.(Ref(max_demand_dict), demand_data.location)
 
-    # # Scale generation availability data to A / D where D is the scaled demand
-    # generation_availability_data = leftjoin(generation_availability_data, demand_data, 
-    #                                         on=[:location, :period, :timestep, :scenario])
-    # generation_availability_data[!, :availability] .= generation_availability_data.availability ./ generation_availability_data.demand
-    # select!(generation_availability_data, Not(:demand))
+    # Scale generation availability data to A / D where D is the scaled demand
+    generation_availability_data = leftjoin(generation_availability_data, demand_data,
+        on=[:location, :period, :timestep, :scenario])
+    generation_availability_data[!, :availability] .= generation_availability_data.availability ./ generation_availability_data.demand
+    select!(generation_availability_data, Not(:demand))
 
     return demand_data, generation_availability_data, max_demand
 end
@@ -804,10 +711,10 @@ Denormalizes the data in `demand_res` and `generation_res` DataFrames using the 
 This function reverses the normalization process applied by `normalize_data!`.
 """
 function denormalize_data(demand_res::DataFrame, generation_res::DataFrame, max_demand::DataFrame)::Tuple{DataFrame,DataFrame}
-    # # Multiply generation data with demand data
-    # generation_res = leftjoin(generation_res, demand_res, on=[:rep_period, :location, :timestep, :scenario])
-    # generation_res[!, :availability] .*= generation_res.demand
-    # select!(generation_res, Not(:demand))
+    # Multiply generation data with demand data
+    generation_res = leftjoin(generation_res, demand_res, on=[:rep_period, :location, :timestep, :scenario])
+    generation_res[!, :availability] .*= generation_res.demand
+    select!(generation_res, Not(:demand))
 
     # Multiply the demand back with the max demand to get the original demand
     demand_res = leftjoin(demand_res, max_demand, on=:location)
