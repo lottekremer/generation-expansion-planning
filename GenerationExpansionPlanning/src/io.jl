@@ -141,7 +141,7 @@ function read_config(config_path::AbstractString)::Dict{Symbol,Any}
         data_config[:generation_availability] = filter(row -> row.period in valid_periods, data_config[:generation_availability])
 
         # Adjust the periods to start at 1
-        if p_min != 0
+        if p_min != 1
             data_config[:demand].period = data_config[:demand].period .- (p_min - 1)
             data_config[:generation_availability].period = data_config[:generation_availability].period .- (p_min - 1)
         end
@@ -264,7 +264,8 @@ function save_result(result::ExperimentResult, config::Dict{Symbol,Any}, time::F
 
     elseif haskey(config[:input], :rp) && haskey(config[:input], :fixed) && config[:input][:fixed][:fixed_run]
         dir = config[:input][:fixed][:dir]
-        dir = joinpath(dir, "..", "test")
+        scenario = config[:input][:sets][:scenarios][1]
+        dir = joinpath(dir, "..", "test$scenario")
         print(dir)
 
     else
@@ -394,9 +395,49 @@ function create_representative_periods(config::Dict{Symbol,Any})::Dict{Symbol,An
             scenario_generation = filter(row -> row.scenario == scenario, data_config[:generation_availability])
 
             scenario_data, max_demand = process_data(scenario_demand, scenario_generation)
-            scenario_rp = find_representative_periods(scenario_data, num_periods; method=method, distance=distance)
-            scenario_rp.profiles[!, :rep_period] = scenario_rp.profiles[!, :rep_period] .+ (index - 1) * num_periods
-            demand_res, generation_res, weights = process_rp(scenario_rp, max_demand, num_periods, config)
+
+            if initial && (rp_config[:use_initial] == "before" || (rp_config[:use_initial] == "after" && num_periods == maximum(initial_rp)))
+                # Add scenario and rename, scale demand and availability and combine
+                rp_demand_temp = filter(row -> row.scenario == scenario, data_config[:rp_demand])
+                rp_generation_temp = filter(row -> row.scenario == scenario, data_config[:rp_generation_availability])
+
+                artificial_demand, artificial_generation = normalize_data(rp_demand_temp, rp_generation_temp, max_demand)
+                artificial = combine_data(artificial_demand, artificial_generation)
+                artificial[!, :period] .-= (minimum(artificial.period) - 1)
+
+                # Process rp
+                scenario_rp = find_representative_periods(scenario_data, num_periods; method=method, distance=distance, initial_representatives=artificial)
+                scenario_rp.profiles[!, :rep_period] = scenario_rp.profiles[!, :rep_period] .+ (index - 1) * num_periods
+                demand_res, generation_res, weights = process_rp(scenario_rp, max_demand, num_periods, config)
+
+                # If after was used, weights should be equal to 1 scaled to weights
+                if rp_config[:use_initial] == "after"
+                    sum_weights = sum(weights_total)
+                    weights_total = ones(length(weights_total)) * sum_weights / length(weights_total)
+                end
+
+            elseif initial && (rp_config[:use_initial]) == "after"
+                # Add scenario and rename
+                artificial_demand = filter(row -> row.scenario == scenario, data_config[:rp_demand])
+                artificial_generation = filter(row -> row.scenario == scenario, data_config[:rp_generation_availability])
+                artificial_demand[!, :period] .-= (minimum(artificial_demand.period) - 1)
+                artificial_generation[!, :period] .-= (minimum(artificial_generation.period) - 1)
+
+                rename!(artificial_demand, :period => :rep_period)
+                rename!(artificial_generation, :period => :rep_period)
+
+                # Process rp
+                num_periods -= floor(Int, length(initial_rp) / length(scenarios))
+                scenario_rp = find_representative_periods(scenario_data, num_periods; method=method, distance=distance)
+                scenario_rp.profiles[!, :rep_period] = scenario_rp.profiles[!, :rep_period] .+ (index - 1) * num_periods
+
+                demand_res, generation_res, weights = process_rp(scenario_rp, max_demand, num_periods, config; artificial_demand, artificial_generation)
+                num_periods += floor(Int, length(initial_rp) / length(scenarios))
+            else
+                scenario_rp = find_representative_periods(scenario_data, num_periods; method=method, distance=distance)
+                scenario_rp.profiles[!, :rep_period] = scenario_rp.profiles[!, :rep_period] .+ (index - 1) * num_periods
+                demand_res, generation_res, weights = process_rp(scenario_rp, max_demand, num_periods, config)
+            end
 
             # Concatenate to the total data
             append!(demand_total, demand_res)
@@ -465,7 +506,7 @@ function create_representative_periods(config::Dict{Symbol,Any})::Dict{Symbol,An
     end
 
     # Create a weight dataframe
-    weights_df = DataFrame(rep_period=1:num_periods, weight=weights_total)
+    weights_df = DataFrame(rep_period=1:rp_config[:number_of_periods], weight=weights_total)
     rp_config[:weights_df] = weights_df
 
     # Save the necessary information
@@ -474,6 +515,9 @@ function create_representative_periods(config::Dict{Symbol,Any})::Dict{Symbol,An
     rp_config[:demand] = demand_total
     rp_config[:generation_availability] = generation_total
     rp_config[:annualization] = (365 * 24) / (sum(weights_total) * sets_config[:period_duration])
+    if rp_config[:clustering_type] == "per_scenario"
+        rp_config[:annualization] = (365 * 24) / (sets_config[:period_duration] * length(sets_config[:periods]))
+    end
 
     # Make sure that columns are still symbols
     string_to_symbols!(rp_config[:demand])
@@ -700,6 +744,7 @@ function normalize_data(demand_data::DataFrame, generation_availability_data::Da
     # Scale generation availability data to A / D where D is the scaled demand
     generation_availability_data = leftjoin(generation_availability_data, demand_data,
         on=[:location, :period, :timestep, :scenario])
+
     generation_availability_data[!, :availability] .= generation_availability_data.availability ./ generation_availability_data.demand
     select!(generation_availability_data, Not(:demand))
 
@@ -750,7 +795,7 @@ end
 Splits the profiles from Tulipaclustering into their original dataframes.
 """
 function get_original_dataframes(rp::TulipaClustering.ClusteringResult)::Tuple{DataFrame,DataFrame}
-    split_profiles = split.(rp.profiles.profile_name, "_")
+    split_profiles = split.(rp.profiles.profile_name, "_"; limit=2)
     rp.profiles[!, :location] = getindex.(split_profiles, 1)
     rp.profiles[!, :technology] = getindex.(split_profiles, 2)
     demand_res = filter(row -> row.technology == "demand", rp.profiles)

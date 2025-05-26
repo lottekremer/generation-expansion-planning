@@ -10,7 +10,7 @@ function run_experiment(data::ExperimentData, optimizer_factory)::ExperimentResu
     L = data.transmission_lines
     S = data.scenarios
     P = data.periods
-    
+
     @info "Converting dataframes to dictionaries"
     demand = dataframe_to_dict(data.demand, [:location, :period, :timestep, :scenario], :demand)
     generation_availability = dataframe_to_dict(data.generation_availability, [:location, :technology, :period, :timestep, :scenario], :availability)
@@ -18,10 +18,11 @@ function run_experiment(data::ExperimentData, optimizer_factory)::ExperimentResu
     variable_cost = dataframe_to_dict(data.generation, [:location, :technology], :variable_cost)
     unit_capacity = dataframe_to_dict(data.generation, [:location, :technology], :unit_capacity)
     ramping_rate = dataframe_to_dict(data.generation, [:location, :technology], :ramping_rate)
+    investment_limit = dataframe_to_dict(data.generation, [:location, :technology], :investment_limit)
     export_capacity = dataframe_to_dict(data.transmission_capacities, [:from, :to], :export_capacity)
     import_capacity = dataframe_to_dict(data.transmission_capacities, [:from, :to], :import_capacity)
     scenario_probabilities = dataframe_to_dict(data.scenario_probabilities, :scenario, :probability)
-    
+
     annualization = 8760 / (length(T) * length(P))
 
     # To Do: do something with inter-period on/off
@@ -58,17 +59,22 @@ function run_experiment(data::ExperimentData, optimizer_factory)::ExperimentResu
         @constraint(model, total_investment_cost == sum(investment_cost[n, g] * investment_MW[n, g] for (n, g) ∈ NG))
 
         # Operational costs are weighted by scenario probability
-        @constraint(model, 
-            total_operational_cost 
-            == 
+        @constraint(model,
+            total_operational_cost
+            ==
             sum(operational_cost_per_scenario[s] * scenario_probabilities[s] for s ∈ S)
-        ) 
+        )
+
+        # Investment limit 
+        @constraint(model, [n ∈ N, g ∈ G; (n, g) ∈ NG],
+            investment_MW[n, g] ≤ investment_limit[n, g]
+        )
 
         # Operation costs get weighted by 8760 / tf to compare to them yearly costs of investments
         @constraint(model, [s ∈ S],
             operational_cost_per_scenario[s]
             ==
-            annualization * 
+            annualization *
             (sum(variable_cost[n, g] * production[n, g, p, t, s] for (n, g) ∈ NG, p ∈ P, t ∈ T)
              +
              data.value_of_lost_load * sum(loss_of_load[n, p, t, s] for n ∈ N, p ∈ P, t ∈ T))
@@ -123,11 +129,11 @@ function run_experiment(data::ExperimentData, optimizer_factory)::ExperimentResu
     investment_decisions_units = jump_variable_to_df(investment; dim_names=(:location, :technology), value_name=:units, value_type=investment_type)
     investment_decisions_MW = jump_variable_to_df(investment_MW; dim_names=(:location, :technology), value_name=:capacity)
     investment_decisions = leftjoin(investment_decisions_MW, investment_decisions_units, on=[:location, :technology])
-    
+
     production_decisions = jump_variable_to_df(production; dim_names=(:location, :technology, :rep_period, :timestep, :scenario), value_name=:production)
     line_flow_decisions = jump_variable_to_df(line_flow; dim_names=(:from, :to, :rep_period, :timestep, :scenario), value_name=:flow)
     loss_of_load_decisions = jump_variable_to_df(loss_of_load; dim_names=(:location, :rep_period, :timestep, :scenario), value_name=:loss_of_load)
-    total_cost = value.(total_operational_cost)+value.(total_investment_cost)
+    total_cost = value.(total_operational_cost) + value.(total_investment_cost)
     operational_cost_per_scenario = jump_variable_to_df(operational_cost_per_scenario; dim_names=(:scenario,), value_name=:operational_cost)
 
     return ExperimentResult(total_cost,
@@ -153,7 +159,7 @@ function run_rp(data::RepData, optimizer_factory)::ExperimentResult
     S = data.scenarios
     P = data.rep_periods
     PS = data.rep_periods_per_scenario
-    
+
     @info "Converting dataframes to dictionaries"
     demand = dataframe_to_dict(data.demand, [:location, :rep_period, :timestep, :scenario], :demand)
     generation_availability = dataframe_to_dict(data.generation_availability, [:location, :technology, :rep_period, :timestep, :scenario], :availability)
@@ -164,8 +170,9 @@ function run_rp(data::RepData, optimizer_factory)::ExperimentResult
     export_capacity = dataframe_to_dict(data.transmission_capacities, [:from, :to], :export_capacity)
     import_capacity = dataframe_to_dict(data.transmission_capacities, [:from, :to], :import_capacity)
     scenario_probabilities = dataframe_to_dict(data.scenario_probabilities, :scenario, :probability)
+    investment_limit = dataframe_to_dict(data.generation, [:location, :technology], :investment_limit)
 
-    period_weights = data.period_weights   
+    period_weights = data.period_weights
     annualization = data.annualization
 
     @info "Solving the problem"
@@ -200,20 +207,25 @@ function run_rp(data::RepData, optimizer_factory)::ExperimentResult
         @constraint(model, total_investment_cost == sum(investment_cost[n, g] * investment_MW[n, g] for (n, g) ∈ NG))
 
         # Operational costs are weighted by scenario probability
-        @constraint(model, 
-            total_operational_cost 
-            == 
+        @constraint(model,
+            total_operational_cost
+            ==
             sum(operational_cost_per_scenario[s] * scenario_probabilities[s] for s ∈ S)
-        ) 
+        )
 
         # Operation costs get weighted by 8760 / tf to compare to them yearly costs of investments
         @constraint(model, [s ∈ S],
             operational_cost_per_scenario[s]
             ==
-            annualization * 
+            annualization *
             (sum(variable_cost[n, g] * production[n, g, p, t, s] * period_weights[p] for (n, g) ∈ NG, p ∈ P, t ∈ T if (p, s) ∈ PS)
              +
              data.value_of_lost_load * sum(loss_of_load[n, p, t, s] * period_weights[p] for n ∈ N, p ∈ P, t ∈ T if (p, s) ∈ PS))
+        )
+
+        # Investment limit 
+        @constraint(model, [n ∈ N, g ∈ G; (n, g) ∈ NG],
+            investment_MW[n, g] ≤ investment_limit[n, g]
         )
 
         # Node balance
@@ -265,11 +277,11 @@ function run_rp(data::RepData, optimizer_factory)::ExperimentResult
     investment_decisions_units = jump_variable_to_df(investment; dim_names=(:location, :technology), value_name=:units, value_type=investment_type)
     investment_decisions_MW = jump_variable_to_df(investment_MW; dim_names=(:location, :technology), value_name=:capacity)
     investment_decisions = leftjoin(investment_decisions_MW, investment_decisions_units, on=[:location, :technology])
-    
+
     production_decisions = jump_variable_to_df(production; dim_names=(:location, :technology, :rep_period, :timestep, :scenario), value_name=:production)
     line_flow_decisions = jump_variable_to_df(line_flow; dim_names=(:from, :to, :rep_period, :timestep, :scenario), value_name=:flow)
     loss_of_load_decisions = jump_variable_to_df(loss_of_load; dim_names=(:location, :rep_period, :timestep, :scenario), value_name=:loss_of_load)
-    total_cost = value.(total_operational_cost)+value.(total_investment_cost)
+    total_cost = value.(total_operational_cost) + value.(total_investment_cost)
     operational_cost_per_scenario = jump_variable_to_df(operational_cost_per_scenario; dim_names=(:scenario,), value_name=:operational_cost)
 
     return ExperimentResult(total_cost,
@@ -305,12 +317,12 @@ function run_fixed_investment(data::FixedData, optimizer_factory)::ExperimentRes
     unit_capacity = dataframe_to_dict(data.generation, [:location, :technology], :unit_capacity)
     ramping_rate = dataframe_to_dict(data.generation, [:location, :technology], :ramping_rate)
     export_capacity = dataframe_to_dict(data.transmission_capacities, [:from, :to], :export_capacity)
-    import_capacity = dataframe_to_dict(data.transmission_capacities, [:from, :to], :import_capacity) 
+    import_capacity = dataframe_to_dict(data.transmission_capacities, [:from, :to], :import_capacity)
     scenario_probabilities = dataframe_to_dict(data.scenario_probabilities, :scenario, :probability)
 
     annualization = 8760 / (length(T) * length(P))
 
-     # To Do: do something with inter-period on/off
+    # To Do: do something with inter-period on/off
 
     @info "Solving the problem"
     dt = @elapsed begin
@@ -337,13 +349,14 @@ function run_fixed_investment(data::FixedData, optimizer_factory)::ExperimentRes
         @info "Adding the cost constraints"
 
         # Operational costs are weighted by scenario probability and 8760 / tf
-        @constraint(model, 
-            total_operational_cost 
-            == sum(operational_cost_per_scenario[s] * scenario_probabilities[s] for s ∈ S))
+        @constraint(model,
+            total_operational_cost
+            ==
+            sum(operational_cost_per_scenario[s] * scenario_probabilities[s] for s ∈ S))
         @constraint(model, [s ∈ S],
             operational_cost_per_scenario[s]
             ==
-            annualization * 
+            annualization *
             (sum(variable_cost[n, g] * production[n, g, t, s, p] for (n, g) ∈ NG, t ∈ T, p ∈ P)
              +
              data.value_of_lost_load * sum(loss_of_load[n, t, s, p] for n ∈ N, t ∈ T, p ∈ P))
@@ -351,16 +364,16 @@ function run_fixed_investment(data::FixedData, optimizer_factory)::ExperimentRes
 
         # Node balance
         @info "Adding the balance constraints"
-        @constraint(model, [n ∈ N, t ∈ T, s ∈ S, p ∈ P], 
+        @constraint(model, [n ∈ N, t ∈ T, s ∈ S, p ∈ P],
             sum(production[n, g, t, s, p] for g ∈ G if (n, g) ∈ NG)
             +
-            sum(line_flow[n_from, n_to, t, s,p] for (n_from, n_to) ∈ L if n_to == n)
+            sum(line_flow[n_from, n_to, t, s, p] for (n_from, n_to) ∈ L if n_to == n)
             -
-            sum(line_flow[n_from, n_to, t, s,p] for (n_from, n_to) ∈ L if n_from == n)
+            sum(line_flow[n_from, n_to, t, s, p] for (n_from, n_to) ∈ L if n_from == n)
             +
-            loss_of_load[n, t, s,p]
+            loss_of_load[n, t, s, p]
             ==
-            demand[n, t, s,p]
+            demand[n, t, s, p]
         )
 
         # Maximum production
@@ -388,7 +401,7 @@ function run_fixed_investment(data::FixedData, optimizer_factory)::ExperimentRes
     production_decisions = jump_variable_to_df(production; dim_names=(:location, :technology, :timestep, :scenario, :period), value_name=:production)
     line_flow_decisions = jump_variable_to_df(line_flow; dim_names=(:from, :to, :timestep, :scenario, :period), value_name=:flow)
     loss_of_load_decisions = jump_variable_to_df(loss_of_load; dim_names=(:location, :timestep, :scenario, :period), value_name=:loss_of_load)
-    total_cost = value.(total_operational_cost)+value.(total_investment_cost)
+    total_cost = value.(total_operational_cost) + value.(total_investment_cost)
     operational_cost_per_scenario = jump_variable_to_df(operational_cost_per_scenario; dim_names=(:scenario,), value_name=:operational_cost)
 
     return ExperimentResult(
