@@ -1,5 +1,4 @@
 using GenerationExpansionPlanning
-using TulipaClustering # search how to do it from a local path
 using Gurobi
 using Profile
 
@@ -7,7 +6,7 @@ config_folder = "case_studies/europe/configs"
 config_files = readdir(config_folder)
 
 for config_file in config_files
-    if endswith(config_file, ".toml") && !endswith(config_file, "start.toml")
+    if endswith(config_file, ".toml")
         config_path = joinpath(config_folder, config_file)
         start_time = @elapsed begin
             @info "Reading config file $config_path"
@@ -50,6 +49,8 @@ for config_file in config_files
 
         @info "Saving the results of the initial run"
         save_result(result, config, process_time; fixed_investment=false)
+
+        # Uncomment the following block if you want to run fixed investment in-sample experiments immediately (not possible for large cases)
 
         # if haskey(config[:input], :rp) && config[:input][:rp][:use_periods]
         #     @info "Create new model with investment decisions fixed"
