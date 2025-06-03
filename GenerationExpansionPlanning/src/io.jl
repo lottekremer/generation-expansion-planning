@@ -741,7 +741,7 @@ function normalize_data(demand_data::DataFrame, generation_availability_data::Da
     max_demand_dict = Dict(row.location => row.max_demand for row in eachrow(max_demand))
     demand_data[!, :demand] .= demand_data.demand ./ getindex.(Ref(max_demand_dict), demand_data.location)
 
-    # Scale generation availability data to A / D where D is the scaled demand
+    # Scale generation availability data to A / D where D is the scaled demand [FOR 2D EXAMPLE THIS IS CREATED INTO A COMMENT]
     generation_availability_data = leftjoin(generation_availability_data, demand_data,
         on=[:location, :period, :timestep, :scenario])
 
@@ -756,7 +756,7 @@ Denormalizes the data in `demand_res` and `generation_res` DataFrames using the 
 This function reverses the normalization process applied by `normalize_data!`.
 """
 function denormalize_data(demand_res::DataFrame, generation_res::DataFrame, max_demand::DataFrame)::Tuple{DataFrame,DataFrame}
-    # Multiply generation data with demand data
+    # Multiply generation data with demand data [FOR 2D EXAMPLE THIS IS CREATED INTO A COMMENT]
     generation_res = leftjoin(generation_res, demand_res, on=[:rep_period, :location, :timestep, :scenario])
     generation_res[!, :availability] .*= generation_res.demand
     select!(generation_res, Not(:demand))
