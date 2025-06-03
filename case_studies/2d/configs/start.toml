@@ -1,0 +1,43 @@
+[output]
+operational_cost_per_scenario = "operational_costs.csv"
+loss_of_load = "loss_of_load.csv"
+scalars = "scalars.toml"
+investment = "investment.csv"
+production = "production.csv"
+line_flow = "line_flow.csv"
+dir = "output_"
+
+[input.sets]
+scenarios = ["1900"]
+locations = "auto"
+generators = "auto"
+periods = "1:100"
+transmission_lines = "auto"
+period_duration = 1
+
+[input.rp]
+number_of_periods = 3
+clustering_type = "cross_scenario"
+method = "convex_hull"
+distance = "SqEuclidean"
+use_periods = true
+blended = false
+lr = 0.001
+tol = 0.0001
+max_iter = 1000
+initial = [1,67,133]
+use_initial = "after"
+
+[input.data]
+transmission_lines = "transmission_lines.csv"
+generation = "generation.csv"
+scenario_probabilities = "auto"
+scalars = "scalars.toml"
+demand = "demand.csv"
+generation_availability = "generation_availability.csv"
+rp_demand = "rp_demand.csv"
+rp_generation_availability = "rp_generation_availability.csv"
+dir = "inputs"
+
+[input.fixed]
+fixed_run = false

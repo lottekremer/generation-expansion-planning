@@ -7,7 +7,7 @@ config_folder = "case_studies/europe/configs"
 config_files = readdir(config_folder)
 
 for config_file in config_files
-    if endswith(config_file, ".toml")
+    if endswith(config_file, ".toml") && !endswith(config_file, "start.toml")
         config_path = joinpath(config_folder, config_file)
         start_time = @elapsed begin
             @info "Reading config file $config_path"

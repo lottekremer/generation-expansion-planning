@@ -1,0 +1,35 @@
+[output]
+scalars = "scalars.toml"
+loss_of_load = "loss_of_load.csv"
+production = "production.csv"
+investment = "investment.csv"
+dir = "output_softmax_"
+line_flow = "line_flow.csv"
+operational_cost_per_scenario = "operational_costs.csv"
+
+[input.rp]
+distance = "SqEuclidean"
+method = "conical_bounded"
+number_of_periods = 3
+use_periods = true
+clustering_type = "cross_scenario"
+blended = false
+
+[input.sets]
+scenarios = ["1900"]
+locations = "auto"
+generators = "auto"
+inter_period = false
+periods = "1:93"
+period_duration = 24
+transmission_lines = "auto"
+
+[input.data]
+generation_availability = "generation_availability.csv"
+generation = "generation.csv"
+scenario_probabilities = "auto"
+demand = "demand.csv"
+seed = "seeds1.json"
+dir = "inputs_softmax"
+transmission_lines = "transmission_lines.csv"
+scalars = "scalars.toml"
