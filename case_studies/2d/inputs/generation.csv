@@ -1,0 +1,6 @@
+technology,location,investment_cost,variable_cost,unit_capacity,ramping_rate
+Coal,GER,33.75,0.15,400,0.4
+Gas,GER,23.33333333,0.05,250,0.75
+Lignite,GER,38.75,0.1,400,0.5
+Oil,GER,24.16666667,0.2,100,0.9
+WindOn,GER,48.4,0.0025,100,1.0

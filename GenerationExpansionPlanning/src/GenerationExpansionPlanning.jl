@@ -8,6 +8,9 @@ using Dates
 using TulipaClustering
 using SparseArrays
 using Distances
+using Random
+using JSON
+using Gurobi
 
 include("data-structures.jl")
 include("io.jl")
