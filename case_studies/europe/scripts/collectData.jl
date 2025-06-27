@@ -136,5 +136,5 @@ for folder in folders
 end
 
 # Save the combined data to a new CSV file
-CSV.write("./case_studies/europe/results/extra.csv", result_in)
+CSV.write("./case_studies/europe/results/cross_new.csv", result_in)
 println("Table with all information has been created")
