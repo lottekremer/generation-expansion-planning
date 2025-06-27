@@ -1,0 +1,90 @@
+library(readr)
+library(ggplot2)
+library(dplyr)
+combined_output <- read_csv("C:/Users/kremerlaa/OneDrive - TNO/Documents/gep/generation-expansion-planning/case_studies/stylized_EU/res/results_csv/9_distribution.csv")
+
+# Create factors
+combined_output$method <- as.factor(combined_output$method)
+combined_output$distance <- as.factor(combined_output$distance)
+combined_output$clustering <- as.factor(combined_output$clustering)
+combined_output$num_periods <- as.integer(combined_output$num_periods)
+
+stochastic_output <- filter(combined_output, method == "stochastic")
+output <- filter(combined_output, method != "stochastic")
+
+# Calculate the regret and speedup
+stochastic_output_summary <- stochastic_output %>%
+  group_by(data) %>%
+  summarise(
+    cost = first(cost),
+    time = first(time)
+  )
+
+output <- output %>%
+  left_join(stochastic_output_summary, by = "data") %>%
+  mutate(
+    cost_increase = pmax(0,(cost.x - cost.y) / cost.y * 100),
+    speedup = time.y / time.x
+  ) %>%
+  rename(
+    cost = cost.x,  
+    time = time.x
+  ) %>%
+  select(-cost.y, -time.y) %>% select(-method, -blended)
+
+# Plot the results
+ggplot(output, aes(x = speedup, y = cost_increase, colour = clustering, shape = distance)) +
+  geom_point(size = 3) +
+  labs(x = "Speedup", y = "Cost Increase (%)", 
+       title = "Cost Increase vs Speedup") +
+  theme_minimal()
+
+categories <- unique(output$data)
+for (cat in categories) {
+  p <- ggplot(output %>% filter(data == cat, distance == "SqEuclidean"), aes(x = num_periods, y = cost_increase, 
+                                                  colour = clustering, 
+                                                  linetype = clustering, group = clustering)) +
+    geom_line(size = 1) +
+    geom_point(size = 1) +
+    labs(x = "Number of Periods", y = "Cost Increase (%)", 
+         title = paste("Cost Increase vs Number of Periods - Squared Euclidean - ", cat)) +
+    theme_minimal() +
+    scale_x_continuous(breaks = seq(
+      from = 3, to = 29, by = 2)) +
+    theme(legend.title = element_blank())
+  
+  show(p)
+  
+  p <- ggplot(output %>% filter(data == cat, distance == "CosineDist"), aes(x = num_periods, y = cost_increase, 
+                                                                             colour = clustering, 
+                                                                             linetype = clustering, group = clustering)) +
+    geom_line(size = 1) +
+    geom_point(size = 1) +
+    labs(x = "Number of Periods", y = "Cost Increase (%)", 
+         title = paste("Cost Increase vs Number of Periods - Cosine Distance - ", cat)) +
+    theme_minimal() +
+    scale_x_continuous(breaks = seq(
+      from = 3, to = 49, by = 2)) +
+    theme(legend.title = element_blank())
+  
+  show(p)
+}
+
+ggplot(output %>% filter(data == "closer", distance == "CosineDist"), aes(x = num_periods, y = cost_increase, 
+                                                                           colour = clustering,
+                                                                           linetype = clustering, group = clustering)) +
+  geom_line(size = 1) +
+  geom_point(size = 1) +
+  labs(x = "Number of Periods", y = "Cost Increase (%)", 
+       title = paste("Cost Increase vs Number of Periods - Cosine Distance - closer")) +
+  theme_minimal() +
+  coord_cartesian(
+    xlim = c(3, 29), 
+    ylim = c(0, 1)
+  ) +
+  scale_x_continuous(breaks = seq(
+    from = 3, to = 49, by = 2)) +
+  theme(legend.title = element_blank())
+
+show(p)
+

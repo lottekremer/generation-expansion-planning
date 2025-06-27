@@ -1,0 +1,67 @@
+library(readr)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+
+inputs <- read.csv("C:/Users/kremerlaa/OneDrive - TNO/Documents/gep/generation-expansion-planning/case_studies/optimality/inputs/generation_availability.csv")
+inputs <- inputs %>% filter(scenario == 1900, location == "NED", timestep == 12, technology != "WindOff") %>% pivot_wider(names_from = technology, values_from = availability)
+
+inputs_centered <- read.csv("C:/Users/kremerlaa/OneDrive - TNO/Documents/gep/generation-expansion-planning/case_studies/optimality/inputs_centered/generation_availability.csv")
+inputs_centered <- inputs_centered %>%
+  mutate(period = time_step %/% 24 + 1,
+         time_step = time_step %% 24) %>% filter(scenario == 1900, location == "NED", time_step == 12, technology != "WindOff") %>% pivot_wider(names_from = technology, values_from = availability)
+
+inputs_uniform <- read.csv("C:/Users/kremerlaa/OneDrive - TNO/Documents/gep/generation-expansion-planning/case_studies/optimality/inputs_uniform/generation_availability.csv")
+inputs_uniform <- inputs_uniform %>%
+  mutate(period = time_step %/% 24 + 1,
+         time_step = time_step %% 24) %>% filter(scenario == 1900, location == "NED", time_step == 12, technology != "WindOff")%>% pivot_wider(names_from = technology, values_from = availability)
+
+inputs_closer <- read.csv("C:/Users/kremerlaa/OneDrive - TNO/Documents/gep/generation-expansion-planning/case_studies/optimality/inputs_closer/generation_availability.csv")
+inputs_closer <- inputs_closer %>%
+  mutate(period = time_step %/% 24 + 1,
+         time_step = time_step %% 24) %>% filter(scenario == 1900, location == "NED", time_step == 12, technology != "WindOff")%>% pivot_wider(names_from = technology, values_from = availability)
+
+inputs_closest <- read.csv("C:/Users/kremerlaa/OneDrive - TNO/Documents/gep/generation-expansion-planning/case_studies/optimality/inputs_closest/generation_availability.csv")
+inputs_closest <- inputs_closest %>%
+  mutate(period = time_step %/% 24 + 1,
+         time_step = time_step %% 24) %>% filter(scenario == 1900, location == "NED", time_step == 12, technology != "WindOff")%>% pivot_wider(names_from = technology, values_from = availability)
+
+ggplot(inputs, aes(x = SunPV, y = WindOn)) +
+  geom_point(size = 2) +
+  labs(x = "Wind Availability", y = "Solar Availability", 
+       title = "Original values of Wind vs Solar Availability") +
+  coord_cartesian(xlim = c(0, 1), ylim = c(0, 1)) +
+  theme_minimal()
+
+ggplot(inputs, aes(x = SunPV, y = WindOn)) +
+  geom_point(size = 3, colour = "red") +
+  geom_point(data = inputs_uniform, aes(x = SunPV, y = WindOn), size = 1, colour = "blue") +
+  labs(x = "Wind Availability", y = "Solar Availability", 
+       title = "Uniformly created values of Wind vs Solar Availability") +
+  coord_cartesian(xlim = c(0, 1), ylim = c(0, 1)) +
+  theme_minimal()
+
+ggplot(inputs, aes(x = SunPV, y = WindOn)) +
+  geom_point(size = 3, colour = "red") +
+  geom_point(data = inputs_centered, aes(x = SunPV, y = WindOn), size = 1, colour = "blue") +
+  labs(x = "Wind Availability", y = "Solar Availability", 
+       title = "Centered values of Wind vs Solar Availability") +
+  coord_cartesian(xlim = c(0, 1), ylim = c(0, 1)) +
+  theme_minimal()
+
+ggplot(inputs, aes(x = SunPV, y = WindOn)) +
+  geom_point(size = 3, colour = "red") +
+  geom_point(data = inputs_closer, aes(x = SunPV, y = WindOn), size = 1, colour = "blue") +
+  labs(x = "Wind Availability", y = "Solar Availability", 
+       title = "Closer values of Wind vs Solar Availability") +
+  coord_cartesian(xlim = c(0, 1), ylim = c(0, 1)) +
+  theme_minimal()
+
+ggplot(inputs, aes(x = SunPV, y = WindOn)) +
+  geom_point(size = 3, colour = "red") +
+  geom_point(data = inputs_closest, aes(x = SunPV, y = WindOn), size = 1, colour = "blue") +
+  labs(x = "Wind Availability", y = "Solar Availability", 
+       title = "Closest values of Wind vs Solar Availability") +
+  coord_cartesian(xlim = c(0, 1), ylim = c(0, 1)) +
+  theme_minimal()
+ 

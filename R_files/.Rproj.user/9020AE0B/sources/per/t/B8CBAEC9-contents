@@ -1,0 +1,87 @@
+library(readr)
+library(ggplot2)
+library(dplyr)
+combined_output <- read_csv("C:/Users/kremerlaa/OneDrive - TNO/Documents/gep/generation-expansion-planning/case_studies/stylized_EU/res/results_csv/combined_output_distribution.csv")
+
+# Create factors
+combined_output$method <- as.factor(combined_output$method)
+combined_output$distance <- as.factor(combined_output$distance)
+combined_output$clustering <- as.factor(combined_output$clustering)
+combined_output$num_periods <- as.factor(combined_output$num_periods)
+
+stochastic_output <- filter(combined_output, method == "stochastic")
+output <- filter(combined_output, method != "stochastic")
+
+# Calculate the regret and speedup
+stochastic_output_summary <- stochastic_output %>%
+  group_by(data) %>%
+  summarise(
+    cost = first(cost),
+    time = first(time)
+  )
+
+output <- output %>%
+  left_join(stochastic_output_summary, by = "data") %>%
+  mutate(
+    average_regret = (cost.x - cost.y) / cost.y * 100,
+    speedup = time.y / time.x
+  ) %>%
+  rename(
+    cost = cost.x,  
+    time = time.x
+  ) %>%
+  select(-cost.y, -time.y)
+
+output_3 <- output %>%
+  filter(num_periods == "3") %>%
+  select(-num_periods)
+
+output_10 <- output %>%
+  filter(num_periods == "10") %>%
+  select(-num_periods)
+
+output_20 <- output %>% 
+  filter(num_periods == "20") %>%
+  select(-num_periods)
+
+# Plot the results
+ggplot(output_3)+geom_point(mapping = aes(x = speedup, y = average_regret, colour = clustering), size = 2) +
+  facet_wrap(~data)
+
+# Split the results
+centered <- filter(output_3, data == "centered")
+close <- filter(output_3, data == "close")
+closer <- filter(output_3, data == "closer")
+closest <- filter(output_3, data == "closest")
+uniform <- filter(output_3, data == "uniform")
+
+# Plot the results
+ggplot(centered)+geom_point(mapping = aes(x = speedup, y = average_regret, colour = clustering), size = 3) +
+  ggtitle("Centered") + facet_grid(cols = vars(distance))
+
+ggplot(close)+geom_point(mapping = aes(x = speedup, y = average_regret, colour = clustering), size = 3) +
+  ggtitle("Close") + facet_grid(cols = vars(distance))
+
+ggplot(closer)+geom_point(mapping = aes(x = speedup, y = average_regret, colour = clustering), size = 3) +
+  ggtitle("Closer") + facet_grid(cols = vars(distance))
+
+ggplot(closest)+geom_point(mapping = aes(x = speedup, y = average_regret, colour = clustering), size = 3) +
+  ggtitle("Closest") + facet_grid(cols = vars(distance))
+
+ggplot(uniform)+geom_point(mapping = aes(x = speedup, y = average_regret, colour = clustering), size = 3) +
+  ggtitle("Uniform") + facet_grid(cols = vars(distance))
+
+# Do the same for output_10
+centered <- filter(output_10, data == "centered")
+close <- filter(output_10, data == "close")
+closer <- filter(output_10, data == "closer")
+closest <- filter(output_10, data == "closest")
+uniform <- filter(output_10, data == "uniform")
+
+# Do the same for output_20`
+centered <- filter(output_20, data == "centered")
+close <- filter(output_20, data == "close")
+closer <- filter(output_20, data == "closer")
+closest <- filter(output_20, data == "closest")
+uniform <- filter(output_20, data == "uniform")
+``
